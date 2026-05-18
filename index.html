@@ -1,0 +1,744 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DeepForensics — Detecção de Manipulação em Imagens</title>
+  <link
+    href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=Space+Mono:wght@400;700&display=swap"
+    rel="stylesheet" />
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+
+<body>
+
+  <!-- SVG defs do liquid-glass filter (zero espaço) -->
+  <svg class="liquid-glass-defs" aria-hidden="true" focusable="false">
+    <defs>
+      <filter id="liquid-glass-filter" x="0%" y="0%" width="100%" height="100%" color-interpolation-filters="sRGB">
+        <feTurbulence type="fractalNoise" baseFrequency="0.05 0.05" numOctaves="1" seed="1" result="turbulence" />
+        <feGaussianBlur in="turbulence" stdDeviation="2" result="blurredNoise" />
+        <feDisplacementMap in="SourceGraphic" in2="blurredNoise" scale="70"
+          xChannelSelector="R" yChannelSelector="B" result="displaced" />
+        <feGaussianBlur in="displaced" stdDeviation="4" result="finalBlur" />
+        <feComposite in="finalBlur" in2="finalBlur" operator="over" />
+      </filter>
+    </defs>
+  </svg>
+
+  <!-- ═══════════════════════════════════════════════
+     NAV  (com botões liquid-glass + theme toggler)
+════════════════════════════════════════════════ -->
+  <nav>
+    <a href="#hero" class="nav-logo">
+      <div class="nav-logo-icon">
+        <svg viewBox="0 0 24 24">
+          <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
+        </svg>
+      </div>
+      DeepForensics
+    </a>
+
+    <ul class="nav-links">
+      <li><a href="#hero"                              class="liquid-btn">Início</a></li>
+      <li><a href="#hero" data-mode-link="single"      class="liquid-btn">Imagem única</a></li>
+      <li><a href="#hero" data-mode-link="batch"       class="liquid-btn">Lote</a></li>
+      <li><a href="#hero" data-mode-link="dataset"     class="liquid-btn">Dataset</a></li>
+      <li><a href="#hero" data-mode-link="benchmark"   class="liquid-btn">Benchmark</a></li>
+      <li><a href="#demo"                              class="liquid-btn">Demo</a></li>
+      <li><a href="#how"                               class="liquid-btn">Como funciona</a></li>
+      <li><a href="#scope"                             class="liquid-btn">Sobre</a></li>
+    </ul>
+
+    <div class="nav-actions">
+      <span class="api-status" id="apiStatus" title="Status do backend">
+        <span class="api-status-dot"></span>
+        <span class="api-status-text">conectando…</span>
+      </span>
+
+      <!-- Animated theme toggler (sol ↔ lua) -->
+      <button class="theme-toggle" id="themeToggle" type="button" aria-label="Alternar tema">
+        <svg class="sm-svg" viewBox="0 0 24 24" fill="none"
+          stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <mask id="theme-mask">
+            <rect x="0" y="0" width="100%" height="100%" fill="white" />
+            <circle class="sm-mask" cx="33" cy="0" r="9" fill="black" />
+          </mask>
+          <circle class="sm-body" cx="12" cy="12" r="5" fill="currentColor"
+            stroke="none" mask="url(#theme-mask)" />
+          <g class="sm-rays">
+            <line x1="12" y1="1"    x2="12" y2="3"    />
+            <line x1="12" y1="21"   x2="12" y2="23"   />
+            <line x1="1"  y1="12"   x2="3"  y2="12"   />
+            <line x1="21" y1="12"   x2="23" y2="12"   />
+            <line x1="5.64"  y1="5.64"  x2="4.22"  y2="4.22"  />
+            <line x1="18.36" y1="5.64"  x2="19.78" y2="4.22"  />
+            <line x1="5.64"  y1="18.36" x2="4.22"  y2="19.78" />
+            <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
+          </g>
+        </svg>
+      </button>
+    </div>
+  </nav>
+
+  <!-- ═══════════════════════════════════════════════
+     HERO / UPLOAD
+════════════════════════════════════════════════ -->
+  <section class="hero" id="hero">
+    <div class="hero-badge">
+      <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor">
+        <circle cx="5" cy="5" r="5" />
+      </svg>
+      Ferramenta Forense Acadêmica · PUC Minas
+    </div>
+
+    <h1>Detecte manipulação<br />em <span>imagens</span></h1>
+    <p>Pipeline unificado: <b>Vanishing Points + ELA + Ruído + Escala</b>, com pesos adaptativos
+      e benchmark de computação paralela.</p>
+
+    <!-- Seletor de modo -->
+    <div class="mode-tabs" id="modeTabs" role="tablist">
+      <button class="mode-tab active" data-mode="single" type="button">Imagem única</button>
+      <button class="mode-tab"        data-mode="batch"  type="button">Lote</button>
+      <button class="mode-tab"        data-mode="dataset" type="button">Dataset (Au + Sp)</button>
+      <button class="mode-tab"        data-mode="benchmark" type="button">Benchmark CP</button>
+    </div>
+
+    <!-- ════════════ Modo: Imagem única ════════════ -->
+    <div class="mode-panel active" data-mode-panel="single">
+      <div class="upload-card" id="uploadCard">
+        <div class="upload-icon">
+          <svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12" />
+          </svg>
+        </div>
+        <h3>Selecionar imagem para análise</h3>
+        <p>Arraste e solte ou clique para fazer upload</p>
+
+        <button class="btn-upload-main" id="btnUpload" type="button">
+          <svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12" />
+          </svg>
+          Selecionar imagem
+        </button>
+
+        <span class="upload-hint">ou arraste e solte a imagem aqui</span>
+
+        <div class="upload-secondary">
+          <div class="example-picker-wrapper">
+            <button class="btn-secondary-sm" id="btnExample" type="button">
+              <svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="3" width="18" height="18" rx="2" />
+                <circle cx="8.5" cy="8.5" r="1.5" />
+                <polyline points="21 15 16 10 5 21" />
+              </svg>
+              Imagem de exemplo
+            </button>
+            <div class="example-picker" id="examplePicker">
+              <div class="example-picker-title">Escolha uma imagem de exemplo</div>
+              <div class="example-picker-grid">
+                <button class="example-picker-item" type="button" onclick="loadExampleImage('Fotos/img1.jpg','img1.jpg')">
+                  <img src="Fotos/img1.jpg" alt="Exemplo 1" />
+                  <span>Foto 1</span>
+                </button>
+                <button class="example-picker-item" type="button" onclick="loadExampleImage('Fotos/img2.jpg','img2.jpg')">
+                  <img src="Fotos/img2.jpg" alt="Exemplo 2" />
+                  <span>Foto 2</span>
+                </button>
+                <button class="example-picker-item" type="button" onclick="loadExampleImage('Fotos/img3.jpg','img3.jpg')">
+                  <img src="Fotos/img3.jpg" alt="Exemplo 3" />
+                  <span>Foto 3</span>
+                </button>
+                <button class="example-picker-item" type="button" onclick="loadExampleImage('Fotos/img4.png','img4.png')">
+                  <img src="Fotos/img4.png" alt="Exemplo 4" />
+                  <span>Foto 4</span>
+                </button>
+                <button class="example-picker-item" type="button" onclick="loadExampleImage('Fotos/img5.jpg','img5.jpg')">
+                  <img src="Fotos/img5.jpg" alt="Exemplo 5" />
+                  <span>Foto 5</span>
+                </button>
+                <button class="example-picker-item" type="button" onclick="loadExampleImage('Fotos/img6.jpg','img6.jpg')">
+                  <img src="Fotos/img6.jpg" alt="Exemplo 6" />
+                  <span>Foto 6</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <p class="hint-foot">JPG · JPEG · PNG · TIF · BMP — máx. 20MB</p>
+    </div>
+
+    <!-- ════════════ Modo: Lote ════════════ -->
+    <div class="mode-panel" data-mode-panel="batch">
+      <div class="upload-card mode-card">
+        <div class="upload-icon">
+          <svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+            <polyline points="14 2 14 8 20 8" />
+          </svg>
+        </div>
+        <h3>Processamento em lote</h3>
+        <p>Selecione múltiplas imagens — execute sequencial OU paralelo para comparar.</p>
+
+        <div class="mode-controls">
+          <label class="seg-control">
+            <span>Execução</span>
+            <div class="segmented">
+              <button class="seg-btn active" type="button" data-batch-mode="par">Paralelo</button>
+              <button class="seg-btn"        type="button" data-batch-mode="seq">Sequencial</button>
+            </div>
+          </label>
+        </div>
+
+        <button class="btn-upload-main" id="btnBatchPick" type="button">
+          <svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12" />
+          </svg>
+          Selecionar imagens
+        </button>
+
+        <span class="upload-hint" id="batchHint">Nenhuma imagem selecionada</span>
+
+        <button class="btn-analyze-again" id="btnBatchRun" type="button" disabled>
+          Executar lote
+        </button>
+      </div>
+      <p class="hint-foot">Até 60 imagens por execução · paralelo usa todos os núcleos</p>
+    </div>
+
+    <!-- ════════════ Modo: Dataset Au + Sp ════════════ -->
+    <div class="mode-panel" data-mode-panel="dataset">
+      <div class="upload-card mode-card">
+        <div class="upload-icon">
+          <svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 3h18v18H3zM3 9h18M9 21V9" />
+          </svg>
+        </div>
+        <h3>Dataset rotulado — Au (autênticas) + Sp (manipuladas)</h3>
+        <p>Avalia o modelo com F1, acurácia, precisão e recall.</p>
+
+        <div class="mode-controls dataset-ctrls">
+          <label class="seg-control">
+            <span>Origem</span>
+            <div class="segmented">
+              <button class="seg-btn active" type="button" data-ds-source="local">Dataset/ local</button>
+              <button class="seg-btn"        type="button" data-ds-source="upload">Upload</button>
+            </div>
+          </label>
+
+          <label class="seg-control">
+            <span>Execução</span>
+            <div class="segmented">
+              <button class="seg-btn active" type="button" data-ds-mode="par">Paralelo</button>
+              <button class="seg-btn"        type="button" data-ds-mode="seq">Sequencial</button>
+            </div>
+          </label>
+
+          <label class="seg-control" id="dsLimitWrap">
+            <span>Máx. por classe</span>
+            <input type="number" id="dsLimit" class="seg-input" value="30" min="2" max="200" step="2" />
+          </label>
+        </div>
+
+        <div class="dataset-uploads" id="datasetUploads" style="display:none;">
+          <div class="ds-up-col">
+            <div class="ds-up-label">Autênticas (Au)</div>
+            <button class="btn-secondary-sm" id="btnAuPick" type="button">Selecionar Au…</button>
+            <span class="upload-hint" id="auHint">Nenhuma imagem</span>
+          </div>
+          <div class="ds-up-col">
+            <div class="ds-up-label">Manipuladas (Sp)</div>
+            <button class="btn-secondary-sm" id="btnSpPick" type="button">Selecionar Sp…</button>
+            <span class="upload-hint" id="spHint">Nenhuma imagem</span>
+          </div>
+        </div>
+
+        <button class="btn-analyze-again" id="btnDatasetRun" type="button">
+          Avaliar dataset
+        </button>
+      </div>
+      <p class="hint-foot">Local usa <code>Dataset/Au</code> e <code>Dataset/Tp</code>. Limite por classe para acelerar.</p>
+    </div>
+
+    <!-- ════════════ Modo: Benchmark CP ════════════ -->
+    <div class="mode-panel" data-mode-panel="benchmark">
+      <div class="upload-card mode-card">
+        <div class="upload-icon">
+          <svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 3v18h18M7 15l4-4 3 3 5-6" />
+          </svg>
+        </div>
+        <h3>Benchmark de Computação Paralela</h3>
+        <p>Roda o pipeline em 1, 2, 4 e <code id="cpuMax">N</code> workers — mede speedup, eficiência e overhead (escalabilidade forte + fraca).</p>
+
+        <div class="mode-controls">
+          <label class="seg-control">
+            <span>Origem</span>
+            <div class="segmented">
+              <button class="seg-btn active" type="button" data-bm-source="local">Dataset/ local</button>
+              <button class="seg-btn"        type="button" data-bm-source="upload">Upload</button>
+            </div>
+          </label>
+
+          <label class="seg-control" id="bmLimitWrap">
+            <span>Imagens (max)</span>
+            <input type="number" id="bmLimit" class="seg-input" value="20" min="4" max="200" step="2" />
+          </label>
+        </div>
+
+        <div id="bmUploadWrap" style="display:none;">
+          <button class="btn-secondary-sm" id="btnBmPick" type="button">Selecionar imagens…</button>
+          <span class="upload-hint" id="bmHint">Nenhuma imagem</span>
+        </div>
+
+        <button class="btn-analyze-again" id="btnBmRun" type="button">
+          Rodar benchmark
+        </button>
+      </div>
+      <p class="hint-foot">Cada configuração é executada uma vez · resultados típicos: ~3 s por imagem</p>
+    </div>
+
+  </section>
+
+  <!-- Inputs ocultos -->
+  <input type="file" id="fileInput"  accept="image/jpeg,image/jpg,image/png" />
+  <input type="file" id="batchInput" accept="image/jpeg,image/jpg,image/png,image/tiff,image/bmp" multiple />
+  <input type="file" id="auInput"    accept="image/jpeg,image/jpg,image/png,image/tiff,image/bmp" multiple />
+  <input type="file" id="spInput"    accept="image/jpeg,image/jpg,image/png,image/tiff,image/bmp" multiple />
+  <input type="file" id="bmInput"    accept="image/jpeg,image/jpg,image/png,image/tiff,image/bmp" multiple />
+
+  <!-- ═══════════════════════════════════════════════
+     RESULTS — Imagem única
+════════════════════════════════════════════════ -->
+  <section id="results-section">
+    <div class="results-header">
+      <h2>Resultado da análise</h2>
+      <span class="filename" id="filenameLabel">—</span>
+    </div>
+
+    <div class="results-grid">
+
+      <!-- Score final + barra colorida -->
+      <div class="card">
+        <div class="card-title">Score Final (5 níveis)</div>
+        <div class="score-display">
+          <div class="score-number" id="scoreNum">—</div>
+          <div class="score-bar-wrap zones-bar">
+            <div class="zones-bg"></div>
+            <div class="score-bar" id="scoreBar" style="width:0%"></div>
+          </div>
+          <div class="zones-axis">
+            <span>0</span><span>20</span><span>40</span><span>60</span><span>80</span><span>100</span>
+          </div>
+          <div class="score-label" id="scoreLabel">Aguardando…</div>
+          <p class="score-explain">
+            VP · ELA · Ruído · Escala — pesos adaptativos por imagem.
+          </p>
+        </div>
+      </div>
+
+      <!-- 4 algoritmos -->
+      <div class="card">
+        <div class="card-title">Componentes do score</div>
+        <div class="components-list" id="componentsList">
+          <!-- preenchido por results.js -->
+        </div>
+      </div>
+
+      <!-- Original com VP -->
+      <div class="card">
+        <div class="card-title">Original</div>
+        <div class="image-preview-wrap">
+          <img id="imgPreview" src="" alt="Original" />
+        </div>
+      </div>
+
+      <!-- Visual VP (linhas + VP) -->
+      <div class="card">
+        <div class="card-title">Vanishing Points — linhas</div>
+        <div class="image-preview-wrap">
+          <img id="imgVpLines" src="" alt="VP / linhas" />
+        </div>
+      </div>
+
+      <!-- ELA -->
+      <div class="card">
+        <div class="card-title">ELA — mapa de erro</div>
+        <div class="image-preview-wrap">
+          <img id="imgEla" src="" alt="ELA" />
+        </div>
+      </div>
+
+      <!-- Inconsistência regional (std blocos ELA) -->
+      <div class="card">
+        <div class="card-title">ELA — inconsistência regional</div>
+        <div class="image-preview-wrap">
+          <img id="imgElaStd" src="" alt="ELA std" />
+        </div>
+      </div>
+
+      <!-- Ruído -->
+      <div class="card">
+        <div class="card-title">Ruído — extração</div>
+        <div class="image-preview-wrap">
+          <img id="imgNoise" src="" alt="Ruído" />
+        </div>
+      </div>
+
+      <!-- Escala / blobs -->
+      <div class="card">
+        <div class="card-title">Escala — objetos detectados</div>
+        <div class="image-preview-wrap">
+          <img id="imgScale" src="" alt="Escala" />
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Resumo técnico -->
+    <div style="margin-top:24px;" class="card">
+      <div class="card-title">Resumo técnico</div>
+      <div class="tech-summary">
+        <div class="tech-row"><span class="key">Vanishing Point estimado</span><span class="val" id="vpCoords">—</span></div>
+        <div class="tech-row"><span class="key">Linhas detectadas</span><span class="val" id="linesCount">—</span></div>
+        <div class="tech-row"><span class="key">Desvio angular médio</span><span class="val" id="angularDev">—</span></div>
+        <div class="tech-row"><span class="key">Blobs (objetos)</span><span class="val" id="blobsCount">—</span></div>
+        <div class="tech-row"><span class="key">Anomalias de escala / graves</span><span class="val" id="anomCount">—</span></div>
+        <div class="tech-row"><span class="key">ELA — média blocos / desvio</span><span class="val" id="elaStats">—</span></div>
+        <div class="tech-row"><span class="key">Ruído — coef. variação</span><span class="val" id="noiseCv">—</span></div>
+        <div class="tech-row"><span class="key">Dimensões da imagem</span><span class="val" id="imgDims">—</span></div>
+        <div class="tech-row"><span class="key">Tempo de processamento</span><span class="val" id="procTime">—</span></div>
+      </div>
+    </div>
+
+    <div style="text-align:center;">
+      <button class="btn-analyze-again" id="btnAgain" type="button">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2"
+          stroke-linecap="round">
+          <polyline points="1 4 1 10 7 10" />
+          <path d="M3.51 15a9 9 0 102.13-9.36L1 10" />
+        </svg>
+        Analisar outra imagem
+      </button>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════════════════
+     RESULTS — Lote
+════════════════════════════════════════════════ -->
+  <section id="batch-section">
+    <div class="results-header">
+      <h2>Resultado — Lote</h2>
+      <span class="filename" id="batchLabel">—</span>
+    </div>
+
+    <div class="kpi-row" id="batchKpis"></div>
+
+    <div class="card" style="margin-top:18px;">
+      <div class="card-title">Distribuição</div>
+      <div class="dist-bars" id="batchDist"></div>
+    </div>
+
+    <div class="card" style="margin-top:18px;">
+      <div class="card-title">Resultados por imagem</div>
+      <div class="table-wrap">
+        <table class="result-table" id="batchTable">
+          <thead>
+            <tr>
+              <th>#</th><th>Arquivo</th><th>Score</th>
+              <th>Status</th><th>VP</th><th>ELA</th><th>Ruído</th><th>Escala</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div style="text-align:center;">
+      <button class="btn-analyze-again" id="btnBatchAgain" type="button">Voltar</button>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════════════════
+     RESULTS — Dataset
+════════════════════════════════════════════════ -->
+  <section id="dataset-section">
+    <div class="results-header">
+      <h2>Avaliação — Dataset Au + Sp</h2>
+      <span class="filename" id="datasetLabel">—</span>
+    </div>
+
+    <div class="kpi-row" id="dsMetricsKpis"></div>
+
+    <div class="results-grid" style="margin-top:18px;">
+      <div class="card">
+        <div class="card-title">Matriz de confusão (positivo = score ≤ <span id="dsLimiar">40</span>)</div>
+        <table class="confusion-matrix" id="dsConfusion">
+          <tbody>
+            <tr><td></td><th>Pred: OK</th><th>Pred: MANIP</th></tr>
+            <tr><th>Real: OK</th>   <td class="cm-tn">—</td><td class="cm-fp">—</td></tr>
+            <tr><th>Real: MANIP</th><td class="cm-fn">—</td><td class="cm-tp">—</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Distribuição</div>
+        <div class="dist-bars" id="dsDist"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Histograma — Au (verde) vs Sp (vermelho)</div>
+        <canvas id="dsHist" width="500" height="220"></canvas>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Métricas (%)</div>
+        <div class="metric-bars" id="dsMetricBars"></div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:18px;">
+      <div class="card-title">Top 10 mais suspeitas</div>
+      <div class="table-wrap">
+        <table class="result-table" id="dsTable">
+          <thead>
+            <tr><th>#</th><th>Arquivo</th><th>Score</th><th>Status</th><th>VP</th><th>ELA</th><th>Ruído</th><th>Escala</th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div style="text-align:center;">
+      <button class="btn-analyze-again" id="btnDsAgain" type="button">Voltar</button>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════════════════
+     RESULTS — Benchmark CP
+════════════════════════════════════════════════ -->
+  <section id="bench-section">
+    <div class="results-header">
+      <h2>Benchmark — Computação Paralela</h2>
+      <span class="filename" id="bmLabel">—</span>
+    </div>
+
+    <div class="kpi-row" id="bmKpis"></div>
+
+    <div class="results-grid" style="margin-top:18px;">
+      <div class="card">
+        <div class="card-title">Escalabilidade forte — Speedup</div>
+        <canvas id="bmSpeedup" width="500" height="240"></canvas>
+      </div>
+      <div class="card">
+        <div class="card-title">Eficiência (forte × fraca)</div>
+        <canvas id="bmEffic" width="500" height="240"></canvas>
+      </div>
+      <div class="card">
+        <div class="card-title">Tempo absoluto por configuração</div>
+        <canvas id="bmTime" width="500" height="240"></canvas>
+      </div>
+      <div class="card">
+        <div class="card-title">Overhead de comunicação</div>
+        <canvas id="bmOverhead" width="500" height="240"></canvas>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:18px;">
+      <div class="card-title">Tabela — escalabilidade forte</div>
+      <div class="table-wrap">
+        <table class="result-table" id="bmTable">
+          <thead>
+            <tr><th>Workers</th><th>Tempo (s)</th><th>Speedup</th><th>Eficiência</th><th>Overhead (s)</th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:18px;">
+      <div class="card-title">Tabela — escalabilidade fraca</div>
+      <div class="table-wrap">
+        <table class="result-table" id="bmTableFraca">
+          <thead>
+            <tr><th>Workers</th><th>Imagens</th><th>Tempo (s)</th><th>Eficiência</th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div style="text-align:center;">
+      <button class="btn-analyze-again" id="btnBmAgain" type="button">Voltar</button>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════════════════
+     SCROLL-ANIM DEMO  (efeito "card que se deita")
+════════════════════════════════════════════════ -->
+  <section class="scroll-anim" data-scroll-anim id="demo">
+    <div class="scroll-anim-stage">
+      <div class="scroll-anim-header">
+        <h2>
+          Veja o que o pipeline mostra
+          <span class="big">na prática</span>
+        </h2>
+        <p>Vanishing points, ELA, ruído e blobs — todos visualizados em um único dashboard.</p>
+      </div>
+      <div class="scroll-anim-card">
+        <div class="scroll-anim-card-inner">
+          <img src="Fotos/img1.jpg"
+               alt="Exemplo de imagem analisada pelo DeepForensics"
+               draggable="false" loading="lazy" />
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════════════════
+     HOW IT WORKS
+════════════════════════════════════════════════ -->
+  <section class="how-section" id="how">
+    <div class="section-header">
+      <h2>Como funciona</h2>
+      <p>Quatro algoritmos rodam em paralelo e são combinados com pesos adaptativos.</p>
+    </div>
+
+    <div class="steps-row">
+      <div class="step">
+        <div class="step-num">01</div>
+        <h4>Vanishing Points</h4>
+        <p>Canny + HoughLinesP + RANSAC para estimar ponto de fuga; mede divergência angular.</p>
+      </div>
+      <div class="step">
+        <div class="step-num">02</div>
+        <h4>ELA</h4>
+        <p>Error Level Analysis — recompressão JPEG e desvio entre blocos 32×32.</p>
+      </div>
+      <div class="step">
+        <div class="step-num">03</div>
+        <h4>Ruído</h4>
+        <p>Diferença com filtro mediano; CV da variância entre blocos.</p>
+      </div>
+      <div class="step">
+        <div class="step-num">04</div>
+        <h4>Escala</h4>
+        <p>Detecta blobs, compara altura observada × esperada pela perspectiva.</p>
+      </div>
+      <div class="step">
+        <div class="step-num">05</div>
+        <h4>Score</h4>
+        <p>Combinação ponderada → 0 (manipulada) a 100 (consistente), 5 zonas.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════════════════
+     SCOPE
+════════════════════════════════════════════════ -->
+  <section class="scope-section" id="scope">
+    <div class="section-header" style="text-align:left;margin-bottom:0;">
+      <h2>Escopo do sistema</h2>
+      <p style="margin-top:8px;">O que o DeepForensics faz — e o que não faz.</p>
+    </div>
+
+    <div class="scope-grid">
+      <div class="scope-card green">
+        <h4>Dentro do escopo</h4>
+        <ul class="scope-list">
+          <li>Análise de imagens estáticas (JPG, PNG, TIF, BMP)</li>
+          <li>VP, ELA, Ruído e Escala combinados com pesos adaptativos</li>
+          <li>Avaliação de dataset rotulado (F1, acurácia, precisão, recall)</li>
+          <li>Benchmark de paralelização (speedup, eficiência, overhead)</li>
+          <li>Score em 5 níveis com mapa visual</li>
+        </ul>
+      </div>
+      <div class="scope-card red">
+        <h4>Fora do escopo</h4>
+        <ul class="scope-list">
+          <li>Análise de vídeos</li>
+          <li>Detecção de deepfakes faciais</li>
+          <li>Cenas sem qualquer estrutura geométrica + textura uniforme</li>
+          <li>Detecção binária definitiva — é ferramenta de auxílio pericial</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════════════════
+     FOOTER
+════════════════════════════════════════════════ -->
+  <footer id="footer">
+    <div>
+      <div class="footer-brand">DeepForensics</div>
+      <div class="footer-sub">
+        Trabalho Interdisciplinar VI · PUC Minas<br />
+        Caio Gloria · Daniel Magalhães · Felipe Faria · João Paulo · Lucas Rodrigues<br />
+        2026
+      </div>
+    </div>
+    <div class="footer-right">
+      <div style="margin-bottom:8px;"><a href="#" class="footer-link">Documentação técnica</a></div>
+      <div style="margin-bottom:8px;"><a href="#" class="footer-link">Repositório GitHub</a></div>
+      <div><a href="#" class="footer-link">Dataset CASIA ITDE</a></div>
+    </div>
+  </footer>
+
+  <!-- ═══════════════════════════════════════════════
+     PREVIEW MODAL
+════════════════════════════════════════════════ -->
+  <div class="preview-modal" id="previewModal">
+    <div class="preview-modal-content">
+      <button class="preview-close" id="btnPreviewClose" type="button">
+        <svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="18" y1="6" x2="6" y2="18" />
+          <line x1="6" y1="6" x2="18" y2="18" />
+        </svg>
+      </button>
+      <div class="preview-image-wrap">
+        <img id="previewImage" src="" alt="Preview da imagem selecionada" />
+      </div>
+      <div class="preview-info">
+        <span class="preview-name" id="previewName">—</span>
+        <button class="btn-analyze" id="btnPreviewOk" type="button">
+          <svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12" />
+          </svg>
+          Analisar imagem
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════
+     LOADING OVERLAY
+════════════════════════════════════════════════ -->
+  <div class="loading-overlay" id="loadingOverlay">
+    <div class="spinner"></div>
+    <div class="loading-text" id="loadingText">Processando…</div>
+    <div class="loading-steps" id="loadingSteps">
+      <div class="loading-step" data-step="vp">  <div class="loading-step-dot"></div>Vanishing Points (Canny + Hough + RANSAC)</div>
+      <div class="loading-step" data-step="ela"> <div class="loading-step-dot"></div>ELA — recompressão JPEG</div>
+      <div class="loading-step" data-step="ruido"><div class="loading-step-dot"></div>Análise de ruído por blocos</div>
+      <div class="loading-step" data-step="esc"> <div class="loading-step-dot"></div>Detecção de blobs / análise de escala</div>
+      <div class="loading-step" data-step="agg"> <div class="loading-step-dot"></div>Agregação adaptativa do score</div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════
+     SCRIPTS
+════════════════════════════════════════════════ -->
+  <!-- Theme inicializa cedo (evita flash de tema errado no load) -->
+  <script src="Js/theme-toggler.js"></script>
+  <script src="Js/api.js"></script>
+  <script src="Js/charts.js"></script>
+  <script src="Js/results.js"></script>
+  <script src="Js/upload.js"></script>
+  <script src="Js/scroll-animation.js"></script>
+
+</body>
+
+</html>

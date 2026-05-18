@@ -1,0 +1,46 @@
+# Dataset CASIA — pesado demais para o GitHub.
+# Mantemos apenas uma amostra em Dataset/Au/sample/ e Dataset/Tp/sample/
+Dataset/Au/*
+Dataset/Tp/*
+!Dataset/Au/sample/
+!Dataset/Tp/sample/
+!Dataset/Au/sample/**
+!Dataset/Tp/sample/**
+
+# Outputs do matplotlib gerados pelo modo CLI do detector
+Resultado_Unico.jpg
+Resultado_Dataset.jpg
+Resultado_Lote.jpg
+Metricas_cp.jpg
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Arquivos da Claude Code / agentes (não devem ir para o repo público)
+.claude/
+
+# Sistema
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs / temporários
+*.log
+df_tmp_*/
+tmp/
+temp/
