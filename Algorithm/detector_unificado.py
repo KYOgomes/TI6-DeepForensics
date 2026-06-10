@@ -452,6 +452,20 @@ def analisar_para_api(image_path, include_visuals=True):
     if 'erro' in r:
         return {'ok': False, 'erro': r['erro']}
 
+    # ── Random Forest: classificação principal (substitui a soma de pesos).
+    #    Se ainda não houver modelo treinado, mantém o score por pesos (fallback).
+    ml = None
+    try:
+        from detector_ml import prever_de_resultado
+        ml = prever_de_resultado(r)
+    except Exception:
+        ml = None
+
+    score_pesos = r['score']               # soma ponderada (mantida p/ transparência)
+    if ml is not None:
+        r['score']  = ml['score']
+        r['status'] = label_status(ml['score'])
+
     img       = r.pop('_img')
     vp        = r.pop('_vp')
     divs      = r.pop('_divs')
@@ -495,6 +509,9 @@ def analisar_para_api(image_path, include_visuals=True):
         },
         'limiares'     : {'L1': L1, 'L2': L2, 'L3': L3, 'L4': L4},
         'detalhes'     : r.get('detalhes', []),
+        'classificador': ('random_forest' if ml is not None else 'pesos_fixos'),
+        'score_pesos'  : float(score_pesos),
+        'ml'           : ml,
     }
 
     if include_visuals:
@@ -532,6 +549,113 @@ def benchmark_paralelo_api(imagens, configs_workers=None, incluir_fraca=True):
                             for k, v in m.items()} for m in metricas_forte],
         'fraca'         : [{k: (float(v) if isinstance(v,(int,float)) else v)
                             for k, v in m.items()} for m in metricas_fraca],
+        'escopo'        : 'imagens',
+        'unidade'       : 'imagens',
+        'titulo'        : f'Paralelizacao das {len(imagens)} imagens',
+    }
+
+
+# ══════════════════════════════════════════════
+# BENCHMARK CP — paralelização das 4 análises de UMA imagem
+#   (para imagem única não há como distribuir "imagens" entre workers:
+#    1 imagem = 1 tarefa. Aqui o eixo é distribuir as 4 análises —
+#    VP, ELA, Ruído e Escala — entre os workers.)
+# ══════════════════════════════════════════════
+
+_TIPOS_ANALISE = ('vp', 'ela', 'ruido', 'escala')
+
+
+def _task_analise(args):
+    """Top-level (multiprocessing): roda UMA das 4 análises. args=(tipo, path)."""
+    tipo, path = args
+    if tipo == 'ela':
+        _, score, *_ = analisar_ela(path)
+        return (tipo, float(score))
+    img = cv2.imread(path)
+    if img is None:
+        return (tipo, 50.0)
+    if tipo == 'vp':
+        score, *_ = analisar_vp(img)
+    elif tipo == 'ruido':
+        _, score, *_ = analisar_ruido(img)
+    elif tipo == 'escala':
+        score, *_ = analisar_escala(img)
+    else:
+        score = 50.0
+    return (tipo, float(score))
+
+
+def benchmark_analises_api(image_path, configs_workers=None):
+    """
+    Benchmark de CP de UMA imagem: distribui as 4 análises (VP/ELA/Ruído/Escala)
+    entre os workers. Mesmo formato de saída de benchmark_paralelo_api, para o
+    front renderizar igual. Como só há 4 tarefas, o nº de workers é limitado a 4.
+    """
+    tarefas  = [(t, image_path) for t in _TIPOS_ANALISE]
+    n_tar    = len(tarefas)                       # 4
+    max_w    = max(1, min(n_tar, cpu_count()))
+    if configs_workers is None:
+        configs_workers = [1, 2, 4]
+    configs_workers = sorted(set(w for w in configs_workers if 1 <= w <= max_w))
+    if 1 not in configs_workers:
+        configs_workers = [1] + configs_workers
+
+    # ── Escalabilidade forte: mesma carga (4 análises), variando workers ──
+    t0 = time.perf_counter()
+    for t in tarefas:
+        _task_analise(t)
+    T1 = time.perf_counter() - t0
+
+    forte = [{'workers': 1, 'tempo': T1, 'speedup': 1.0, 'eficiencia': 1.0,
+              'overhead': 0.0, 'label': 'Sequencial\n(baseline)'}]
+    for n in configs_workers:
+        if n <= 1:
+            continue
+        t0 = time.perf_counter()
+        with Pool(n) as pool:
+            pool.map(_task_analise, tarefas)
+        TN = time.perf_counter() - t0
+        speedup = T1 / TN if TN > 0 else 1.0
+        forte.append({
+            'workers':    n,
+            'tempo':      TN,
+            'speedup':    round(speedup, 3),
+            'eficiencia': round(speedup / n, 3),
+            'overhead':   round(max(0.0, TN * n - T1), 3),
+            'label':      f'{n} workers',
+        })
+
+    # ── Escalabilidade fraca: 1 análise por worker (carga ∝ workers) ──
+    fraca = []
+    T1f = None
+    for n in configs_workers:
+        carga = (tarefas * ((n // n_tar) + 1))[:n]
+        if n == 1:
+            t0 = time.perf_counter()
+            _task_analise(carga[0])
+            TN = time.perf_counter() - t0
+            T1f = TN
+        else:
+            t0 = time.perf_counter()
+            with Pool(n) as pool:
+                pool.map(_task_analise, carga)
+            TN = time.perf_counter() - t0
+        ef = (T1f / TN) if T1f and TN > 0 else 1.0
+        fraca.append({'workers': n, 'tempo': TN, 'eficiencia': round(ef, 3)})
+
+    return {
+        'ok'        : True,
+        'n_imagens' : n_tar,           # 4 análises (mantém a chave p/ o front)
+        'cpu_count' : cpu_count(),
+        'configs'   : configs_workers,
+        'T1'        : float(T1),
+        'forte'     : [{k: (float(v) if isinstance(v, (int, float)) else v)
+                        for k, v in m.items()} for m in forte],
+        'fraca'     : [{k: (float(v) if isinstance(v, (int, float)) else v)
+                        for k, v in m.items()} for m in fraca],
+        'escopo'    : 'analises',
+        'unidade'   : 'analises',
+        'titulo'    : 'Paralelizacao das 4 analises desta imagem',
     }
 
 

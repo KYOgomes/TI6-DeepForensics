@@ -49,8 +49,11 @@ from detector_unificado import (
     analisar_lote_api,
     avaliar_dataset_api,
     benchmark_paralelo_api,
+    benchmark_analises_api,
+    _analisar_leve,
     L1, L2, L3, L4,
 )
+import detector_ml
 from multiprocessing import cpu_count, freeze_support
 
 # Front-end é a raiz do repositório
@@ -140,7 +143,22 @@ def info():
 
 
 # ─────────────────────────────────────────────
-# Modo 1 — imagem única (pipeline completo + visuais)
+# Benchmark CP — roda sobre o que o usuário enviou (não sobre o dataset):
+#   • imagem única → distribui as 4 análises (VP/ELA/Ruído/Escala) entre workers
+#   • lote         → distribui as N imagens enviadas entre workers
+# ─────────────────────────────────────────────
+def _bench_lote(paths):
+    """Benchmark de CP distribuindo as imagens enviadas entre os workers."""
+    cfg = sorted(set([1, 2, 4, cpu_count()]))
+    cfg = [w for w in cfg if w <= max(len(paths), 1)] or [1]
+    bm = benchmark_paralelo_api(paths, configs_workers=cfg, incluir_fraca=True)
+    if bm and bm.get('ok'):
+        bm['titulo'] = f"Paralelizacao das {len(paths)} imagens enviadas"
+    return bm
+
+
+# ─────────────────────────────────────────────
+# Modo 1 — imagem única (pipeline completo + visuais + benchmark das 4 análises)
 # ─────────────────────────────────────────────
 @app.route('/api/analyze', methods=['POST'])
 def analyze_single():
@@ -159,6 +177,9 @@ def analyze_single():
         t_ini = time.perf_counter()
         payload = analisar_para_api(dst, include_visuals=True)
         payload['tempo'] = round(time.perf_counter() - t_ini, 3)
+        bm = benchmark_analises_api(dst)   # paraleliza as 4 análises desta imagem
+        if bm and bm.get('ok'):
+            payload['benchmark'] = bm
         return jsonify(payload)
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
@@ -186,6 +207,9 @@ def analyze_batch():
         result = analisar_lote_api(paths, workers=workers)
         result['modo']    = mode
         result['limite']  = MAX_BATCH
+        bm = _bench_lote(paths)            # distribui as N imagens enviadas
+        if bm and bm.get('ok'):
+            result['benchmark'] = bm
         return jsonify(result)
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
@@ -310,11 +334,84 @@ def benchmark_local():
 
 
 # ─────────────────────────────────────────────
+# ML — status do modelo Random Forest
+# ─────────────────────────────────────────────
+@app.route('/api/ml/status')
+def ml_status():
+    return jsonify(detector_ml.status_modelo())
+
+
+# ─────────────────────────────────────────────
+# ML — treino usando o dataset local (gera/atualiza o .pkl)
+#   Body JSON: {au_dir?, sp_dir?, max_per_class?, n_estimators?}
+#   Padrão: Dataset/Au e Dataset/Tp
+# ─────────────────────────────────────────────
+@app.route('/api/ml/train', methods=['POST'])
+def ml_train():
+    data = request.get_json(silent=True) or {}
+    au_dir = data.get('au_dir')
+    sp_dir = data.get('sp_dir')
+    max_per_class = data.get('max_per_class')
+    if max_per_class is not None:
+        max_per_class = min(int(max_per_class), MAX_LOCAL)
+    n_estimators = int(data.get('n_estimators') or 200)
+
+    result = detector_ml.treinar(
+        au_dir=au_dir, sp_dir=sp_dir,
+        max_per_class=max_per_class, n_estimators=n_estimators)
+    return jsonify(result), (200 if result.get('ok') else 400)
+
+
+# ─────────────────────────────────────────────
+# ML — predição de UMA imagem por upload (Random Forest)
+#   multipart: image=<file>
+# ─────────────────────────────────────────────
+@app.route('/api/ml/predict', methods=['POST'])
+def ml_predict():
+    if not detector_ml.modelo_existe():
+        return jsonify({'ok': False, 'erro': 'modelo nao treinado — chame POST /api/ml/train'}), 400
+
+    f = request.files.get('image')
+    if not f or not f.filename:
+        return jsonify({'ok': False, 'erro': 'envie image=<arquivo>'}), 400
+    if not _ext_ok(f.filename):
+        return jsonify({'ok': False, 'erro': 'formato nao suportado'}), 400
+
+    tmpdir = tempfile.mkdtemp(prefix='df_ml_')
+    try:
+        dst = os.path.join(tmpdir, os.path.basename(f.filename))
+        f.save(dst)
+
+        t_ini = time.perf_counter()
+        r = _analisar_leve(dst)               # roda VP+ELA+Ruído+Escala (4 scores)
+        if 'erro' in r:
+            return jsonify({'ok': False, 'erro': r['erro']}), 400
+        pred = detector_ml.prever_de_resultado(r)
+        if pred is None:
+            return jsonify({'ok': False, 'erro': 'falha ao carregar modelo'}), 500
+
+        return jsonify({
+            'ok'         : True,
+            'arquivo'    : os.path.basename(f.filename),
+            'tempo'      : round(time.perf_counter() - t_ini, 3),
+            'scores'     : {
+                'vp'    : float(r['score_vp']),
+                'ela'   : float(r['score_ela']),
+                'ruido' : float(r['score_ruido']),
+                'escala': float(r['score_escala']),
+            },
+            **pred,
+        })
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+# ─────────────────────────────────────────────
 # Servir exemplos / assets
 # ─────────────────────────────────────────────
 @app.route('/<path:filename>')
 def static_files(filename):
-    if filename in ('app.py', 'detector_unificado.py'):
+    if filename in ('app.py', 'detector_unificado.py', 'detector_ml.py'):
         return ('forbidden', 403)
     full = os.path.join(ROOT, filename)
     if os.path.isfile(full):
@@ -328,5 +425,13 @@ if __name__ == '__main__':
     print(f"\n  DeepForensics API em http://127.0.0.1:{port}")
     print(f"  ROOT estaticos: {ROOT}")
     print(f"  CPUs disponiveis: {cpu_count()}\n")
-    # use_reloader=False para não duplicar workers em multiprocessing
-    app.run(host='127.0.0.1', port=port, debug=False, use_reloader=False, threaded=True)
+    # Preferimos um servidor WSGI real (waitress): o servidor de
+    # desenvolvimento do Werkzeug trunca respostas grandes no Windows
+    # (as análises devolvem visuais base64 de vários MB). Fallback p/ app.run.
+    try:
+        from waitress import serve
+        print("  Servidor: waitress (WSGI)\n")
+        serve(app, host='127.0.0.1', port=port, threads=8)
+    except ImportError:
+        print("  Servidor: Werkzeug (dev) — instale 'waitress' p/ respostas grandes\n")
+        app.run(host='127.0.0.1', port=port, debug=False, use_reloader=False, threaded=True)

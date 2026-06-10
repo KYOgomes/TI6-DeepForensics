@@ -201,8 +201,13 @@
   });
 
   /* ══════════════════════════════════════
-     MODO 3 — DATASET
+     MODOS 3 e 4 — DATASET e BENCHMARK CP (DESATIVADOS)
+     O dataset é usado só p/ treino do Random Forest, e o benchmark de
+     computação paralela roda EMBUTIDO junto da análise (imagem única / lote).
+     Os blocos abaixo ficam desativados via `if (false)` — o markup dos painéis
+     também está comentado no index.html, então estes elementos não existem mais.
      ══════════════════════════════════════ */
+  if (false) {
   const auInput    = document.getElementById('auInput');
   const spInput    = document.getElementById('spInput');
   const btnAuPick  = document.getElementById('btnAuPick');
@@ -303,5 +308,7 @@
         .catch(fail);
     }
   });
+
+  } // fim do if(false) — MODOS 3 e 4 desativados (rodam embutidos)
 
 })();

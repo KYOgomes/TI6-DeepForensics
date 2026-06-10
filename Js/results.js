@@ -19,6 +19,14 @@ function showSection(sec) {
   sec.style.display = 'block';
   sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
+/* Mostra várias seções juntas (ex.: resultado + benchmark embutido) e
+   rola para a primeira. */
+function showSections(secs) {
+  hideAllResults();
+  const visiveis = secs.filter(Boolean);
+  visiveis.forEach(s => { s.style.display = 'block'; });
+  if (visiveis[0]) visiveis[0].scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
 
 /* ── Cores e labels das 5 zonas ── */
 const ZONES = [
@@ -109,7 +117,9 @@ function showSingleResult(filename, payload) {
   setImg('imgNoise',    v.ruido);
   setImg('imgScale',    v.escala);
 
-  showSection(SEC_SINGLE);
+  /* benchmark de computação paralela embutido (medido no dataset local) */
+  const bmExtra = renderBenchmarkEmbutido(payload.benchmark);
+  showSections([SEC_SINGLE, bmExtra]);
 }
 
 /* ══════════════════════════════════════════════
@@ -146,7 +156,9 @@ function showBatchResult(payload) {
     .map((r, i) => rowResult(i + 1, r))
     .join('');
 
-  showSection(SEC_BATCH);
+  /* benchmark de computação paralela embutido (medido no dataset local) */
+  const bmExtra = renderBenchmarkEmbutido(payload.benchmark);
+  showSections([SEC_BATCH, bmExtra]);
 }
 
 /* ══════════════════════════════════════════════
@@ -216,7 +228,9 @@ function showDatasetResult(payload) {
 /* ══════════════════════════════════════════════
    MODO 4 — BENCHMARK CP
    ══════════════════════════════════════════════ */
-function showBenchResult(payload) {
+/* Renderiza o painel de benchmark (KPIs, gráficos e tabelas) sem decidir
+   visibilidade da seção — usado tanto isolado quanto embutido. */
+function renderBenchmark(payload) {
   document.getElementById('bmLabel').textContent =
     `${payload.n_imagens} imagens · ${payload.cpu_count} CPUs · T1=${payload.T1.toFixed(2)}s`;
 
@@ -282,8 +296,40 @@ function showBenchResult(payload) {
       <td>${m.tempo.toFixed(3)}</td>
       <td>${(m.eficiencia*100).toFixed(1)}%</td>
     </tr>`).join('');
+}
 
+/* Benchmark como seção isolada (mantido por compatibilidade). */
+function showBenchResult(payload) {
+  renderBenchmark(payload);
+  const back = document.getElementById('bmBackWrap');
+  const note = document.getElementById('bmEmbeddedNote');
+  if (back) back.style.display = '';
+  if (note) note.style.display = 'none';
   showSection(SEC_BENCH);
+}
+
+/* Benchmark EMBUTIDO no resultado de imagem única / lote. Recebe o objeto
+   payload.benchmark vindo do backend (medido no dataset local). Devolve a
+   seção a exibir junto, ou null se não houver benchmark. */
+function renderBenchmarkEmbutido(bm) {
+  if (!bm || bm.ok === false || !bm.forte) return null;
+  renderBenchmark(bm);
+  /* esconde o "Voltar" próprio (o single/lote já tem o seu) e ajusta os textos */
+  const back = document.getElementById('bmBackWrap');
+  const note = document.getElementById('bmEmbeddedNote');
+  if (back) back.style.display = 'none';
+
+  const analises = bm.escopo === 'analises';
+  const unidade  = analises ? 'análises' : 'imagens';
+  document.getElementById('bmLabel').textContent =
+    `${bm.n_imagens} ${unidade} · ${bm.cpu_count} CPUs · T1=${bm.T1.toFixed(3)}s`;
+  if (note) {
+    note.style.display = '';
+    note.textContent = analises
+      ? 'Speedup medido paralelizando as 4 análises (VP, ELA, Ruído e Escala) desta imagem em 1/2/4 workers — uma análise por worker.'
+      : 'Speedup medido distribuindo as imagens enviadas entre 1, 2, 4 e N workers.';
+  }
+  return SEC_BENCH;
 }
 
 /* ══════════════════════════════════════════════
