@@ -1,0 +1,472 @@
+\documentclass[12pt]{article}
+
+\usepackage{sbc-template}
+\usepackage{graphicx,url}
+\usepackage[utf8]{inputenc}
+\usepackage[brazil]{babel}
+\usepackage{booktabs}
+
+\sloppy
+
+\title{DeepForensics: detecção paralela e distribuída de adulteração de
+  imagens no CASIA 2.0 por múltiplas análises forenses e Random Forest}
+
+\author{Caio Gomes Alcântara Gloria\inst{1}, Daniel Salgado Magalhães\inst{1},
+  Felipe Silva Faria\inst{1},\\ João Lucas de Melo Quintão\inst{1},
+  João Paulo de Castro\inst{1}, Lucas Araujo Barduino Rodrigues\inst{1}}
+
+\address{Curso de Ciência da Computação\\
+  Pontifícia Universidade Católica de Minas Gerais (PUC Minas)\\
+  Belo Horizonte -- MG -- Brasil
+}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+  Editing tools have made manipulated images common, which motivates automatic
+  detection methods. This paper describes DeepForensics, a system that labels
+  images from the CASIA 2.0 dataset as authentic or tampered. Detection combines
+  four classical passive cues, each turned into a calibrated 0--100 score:
+  Error Level Analysis (ELA), noise inconsistency, perspective consistency via
+  vanishing points, and relative object scale. A Random Forest learns to fuse
+  the four scores into the final decision, replacing a hand-tuned weighted sum.
+  The per-image workload is parallelized over the cores of the machine with the
+  Python \texttt{multiprocessing} library, and we measure the gain through strong
+  and weak scaling experiments. The system is also designed to run distributed
+  across machines linked by a WireGuard overlay under a chief/worker model over
+  XML-RPC, in which only image paths and scores would travel the network; we
+  report the implemented single-machine parallel system and describe the
+  distributed layer as planned work. A web interface (Flask plus HTML/JS) drives
+  single-image analysis with visualizations, labelled-dataset evaluation, Random
+  Forest training, and the scalability benchmarks.
+\end{abstract}
+
+\begin{resumo}
+  A facilidade de editar imagens com as ferramentas atuais tornou comum a
+  circulação de conteúdo adulterado, o que motiva métodos automáticos de
+  detecção. Este artigo descreve o DeepForensics, um sistema que classifica
+  imagens do conjunto CASIA 2.0 como autênticas ou adulteradas. A detecção
+  combina quatro vestígios passivos clássicos, cada um convertido em um score
+  calibrado de 0 a 100: a análise de nível de erro (ELA), a inconsistência de
+  ruído, a consistência de perspectiva por pontos de fuga e a escala relativa
+  dos objetos. Um \textit{Random Forest} aprende a fundir os quatro scores na
+  decisão final, no lugar de uma soma de pesos ajustada à mão. A carga por
+  imagem é paralelizada entre os núcleos da máquina com a biblioteca
+  \texttt{multiprocessing} do Python, e medimos o ganho por meio de experimentos
+  de escalabilidade forte e fraca. O sistema também está projetado para executar
+  de forma distribuída entre máquinas ligadas por uma rede WireGuard, num modelo
+  \textit{chief}/\textit{worker} sobre XML-RPC, em que apenas caminhos de imagem
+  e scores trafegariam pela rede; relatamos o que já roda (o paralelismo em uma
+  máquina) e descrevemos a camada distribuída como trabalho planejado. Uma
+  interface web (Flask com HTML/JS) opera a análise de imagem única com
+  visualizações, a avaliação de conjuntos rotulados, o treino do \textit{Random
+  Forest} e os \textit{benchmarks} de escalabilidade.
+\end{resumo}
+
+\section{Introdução}
+
+Editar uma imagem hoje não exige conhecimento técnico. Aplicativos de celular
+removem objetos, trocam rostos e ajustam cenas em poucos toques, e o resultado
+costuma ser convincente o bastante para enganar quem olha sem desconfiar. Quando
+uma imagem desse tipo aparece em uma notícia, num processo ou numa rede social,
+saber se ela foi alterada deixa de ser curiosidade e passa a ter consequência.
+Esse problema é bastante estudado na área forense de imagens, que procura
+indícios de manipulação na própria imagem, sem depender de marca d'água ou de
+metadados, que são fáceis de remover ou forjar \cite{farid2009,birajdar2013}.
+
+O problema que tratamos é simples de evidenciar e trabalhoso de resolver: dada
+uma imagem, decidir se ela é autêntica ou foi adulterada. Diferentes formas de
+adulteração deixam vestígios diferentes, e nenhum sinal isolado é suficiente.
+Quando uma parte de uma imagem é recortada, colada e salva de novo, ela passa a
+ter um histórico de recompressão distinto do resto da cena, incoerência que a
+análise de nível de erro (\textit{Error Level Analysis}, ELA) revela. A região
+inserida também costuma trazer um padrão de ruído de sensor incompatível com a
+vizinhança, quebrar a geometria de perspectiva da cena ou exibir um tamanho
+relativo implausível para a posição que ocupa. Nosso detector lê justamente
+esses quatro sinais --- ELA, ruído, pontos de fuga e escala --- e deixa que um
+classificador \textit{Random Forest} aprenda a combiná-los na decisão final.
+
+Há ainda uma questão de escala. O CASIA 2.0, que usamos como base, reúne cerca
+de 12 mil imagens \cite{dong2013casia}. Rodar as quatro análises em todas elas,
+em sequência e numa máquina só, é lento. Esse é exatamente o tipo de carga ---
+uma mesma análise repetida sobre muitas imagens independentes --- que justifica
+paralelizar o trabalho entre os núcleos de cada máquina e, num passo seguinte,
+distribuí-lo entre várias máquinas, que é o foco de sistemas deste trabalho.
+
+\subsection{Objetivos}
+
+O objetivo geral é construir um sistema capaz de classificar as imagens do CASIA
+2.0 como autênticas ou adulteradas, integrando processamento e análise de
+imagens, computação paralela e computação distribuída.
+
+Como objetivos específicos, definimos: (i) implementar a detecção de adulteração
+por quatro análises passivas --- ELA, ruído, pontos de fuga e escala ---, cada
+uma produzindo um score de 0 a 100; (ii) fundir esses scores com um classificador
+\textit{Random Forest} treinado, no lugar de pesos fixos ajustados à mão; (iii)
+paralelizar o processamento das imagens dentro de cada máquina e projetar a
+execução distribuída entre várias máquinas conectadas por uma rede privada; (iv)
+calibrar a saída em um score interpretável, em cinco faixas; e (v) medir tanto a
+qualidade da classificação quanto o ganho de desempenho do paralelismo. Para
+operar o sistema, construímos ainda uma interface web que reúne a análise de
+imagens, o treino do modelo, a avaliação sobre conjuntos rotulados e a execução
+dos \textit{benchmarks}.
+
+\subsection{Justificativa}
+
+Do ponto de vista prático, detectar adulteração é relevante para jornalismo,
+perícia e moderação de conteúdo, e a literatura mostra que técnicas passivas
+conseguem indícios úteis mesmo sem informação externa \cite{farid2009}. Do ponto
+de vista do nosso curso, o trabalho serve como exercício de integração: em vez de
+tratar processamento de imagens, sistemas distribuídos e paralelismo como
+assuntos separados, ele força a pensar como as três coisas conversam num sistema
+real. A própria característica da carga, uma mesma análise repetida sobre muitas
+imagens independentes, é o caso de uso clássico que motiva uma arquitetura
+paralela e distribuída, o que torna o problema um bom pretexto para aplicar esses
+conceitos sem que eles pareçam desnecessários.
+
+\section{Revisão da Literatura}
+
+A detecção passiva de adulteração se apoia na ideia de que toda edição deixa
+algum vestígio, mesmo que invisível a olho nu. Os levantamentos da área
+organizam as técnicas por tipo de vestígio que exploram: artefatos de
+compressão, inconsistências de ruído, traços de interpolação de cor, repetição
+de regiões e inconsistências geométricas ou de iluminação
+\cite{farid2009,birajdar2013}. Nosso detector toma emprestado quatro desses
+sinais, descritos a seguir.
+
+A análise de nível de erro (\textit{Error Level Analysis}, ELA), popularizada por
+Krawetz \cite{krawetz2007}, recomprime a imagem em JPEG com qualidade conhecida e
+observa a diferença em relação à original. Regiões editadas tendem a ter um nível
+de erro distinto do restante, porque passaram por um histórico de compressão
+diferente. Um sinal aparentado é o do \textit{JPEG ghost} \cite{farid2009}, que
+revela inconsistências quando uma região foi salva com qualidade JPEG diferente
+do entorno. O ELA é uma das quatro análises que combinamos.
+
+A análise de ruído parte da premissa de que regiões de origens diferentes têm
+variância de ruído incompatível com a vizinhança \cite{mahdian2009}; nós a
+empregamos medindo o ruído local e a sua dispersão entre blocos da imagem. As
+inconsistências geométricas e de iluminação \cite{farid2009} fundamentam nossa
+terceira análise: numa cena com perspectiva, retas paralelas no mundo convergem
+para um ponto de fuga, e desvios desse padrão sugerem inserção de conteúdo de
+outra cena. O mesmo raciocínio de perspectiva sustenta a quarta análise, que
+compara o tamanho relativo dos objetos com o esperado para a posição que ocupam.
+
+Outras famílias clássicas atacam vestígios que não tratamos. A detecção de
+copy-move cuida do caso em que um pedaço da imagem é copiado para outro lugar
+dela mesma, e os métodos baseados em pontos-chave, como o SIFT \cite{lowe2004},
+são robustos a rotação e a escala \cite{christlein2012}. Não implementamos
+copy-move; ele aparece aqui apenas para situar nossas escolhas no panorama
+forense.
+
+Mais recentemente, métodos baseados em aprendizado profundo passaram a dominar os
+\textit{benchmarks}. Bayar e Stamm \cite{bayar2016} propõem uma camada
+convolucional que aprende a realçar resíduos de manipulação, Zhou et al.
+\cite{zhou2018} combinam cor e ruído numa rede de duas vias, e Nagm et al.
+\cite{nagm2024} mostram que uma CNN compacta alimentada com a imagem ELA atinge
+cerca de 94\% de acurácia no CASIA 2.0. Optamos por um caminho diferente: em vez
+de treinar uma rede profunda, que exige mais dados e GPU, extraímos quatro
+descritores interpretáveis e os fundimos com um \textit{Random Forest}, um
+ensemble de árvores de decisão. A escolha mantém o custo por imagem baixo, sem
+GPU, e concentra o esforço na parte de sistemas, que é o objetivo do trabalho.
+
+\subsection{Posicionamento deste trabalho}
+
+A maior parte da literatura busca um detector melhor e o avalia isoladamente.
+Nosso trabalho tem outro foco. Não propomos um detector novo: reaproveitamos
+quatro análises passivas clássicas e as combinamos com um classificador padrão.
+O que tratamos é o lado de sistemas, pouco discutido nesses artigos: como
+orquestrar a análise sobre um conjunto grande de imagens, paralelizando-a entre
+os núcleos e, em projeto, distribuindo-a entre máquinas, calibrando a saída e
+medindo o ganho de desempenho. A escolha por descritores baratos é deliberada:
+todas as quatro análises rodam em CPU, sem treino pesado, o que mantém o foco na
+parte paralela e distribuída. A Tabela~\ref{tab:comparativo} resume esse
+posicionamento.
+
+\begin{table}[ht]
+\centering
+\caption{Comparação entre as abordagens da literatura e a deste trabalho}
+\label{tab:comparativo}
+\begin{tabular}{lccc}
+\toprule
+\textbf{Aspecto} & \textbf{ELA clássico} & \textbf{Rede profunda} & \textbf{Este trabalho} \\
+\midrule
+Sinais usados          & 1 (ELA)     & aprendidos   & 4 (ELA, ruído, VP, escala) \\
+Treinamento de modelo  & não         & sim (GPU)    & sim (Random Forest, leve) \\
+Interpretabilidade     & alta        & baixa        & média/alta \\
+Foco em sistemas       & raro        & raro         & central \\
+Custo por imagem       & baixo       & alto (GPU)   & baixo (CPU) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Metodologia}
+
+\subsection{Conjunto de dados}
+
+Usamos o CASIA 2.0 \cite{dong2013casia}, que reúne 7.491 imagens autênticas (Au)
+e 5.123 imagens adulteradas (Tp), nos formatos JPEG, BMP e TIFF. As adulterações
+são de dois tipos: \textit{splicing}, que cola conteúdo de outra imagem, e
+copy-move, que duplica regiões da mesma imagem. O conjunto traz o rótulo de cada
+imagem, o que permite avaliação supervisionada. O repositório do projeto embarca
+uma amostra reduzida (50~Au e 50~Tp) para execuções rápidas, e o sistema aponta
+automaticamente para as pastas \texttt{Dataset/Au} e \texttt{Dataset/Tp} com o
+conjunto completo quando disponível. Para treinar o classificador, extraímos as
+\textit{features} de todas as imagens e usamos uma partição estratificada em 75\%
+treino e 25\% teste, complementada por validação cruzada de cinco dobras, sem
+nunca treinar o modelo com imagens do conjunto de teste.
+
+\subsection{Análises forenses}
+
+Toda a detecção parte das mesmas quatro análises, calculadas de forma
+independente sobre a imagem. Cada uma devolve um score de 0 a 100, em que valores
+altos indicam consistência (autenticidade) e valores baixos, indícios de
+manipulação.
+
+\begin{itemize}
+  \item \textbf{ELA (nível de erro).} A imagem é recomprimida em JPEG
+    (qualidade base 95 e depois 75) e tomamos o valor absoluto da diferença
+    pixel a pixel. Sobre esse mapa, em blocos de $32\times32$, medimos a média e
+    o desvio do erro; média alta e dispersão alta entre blocos penalizam o score.
+    Como a recompressão é interna, a análise se aplica também a BMP e TIFF.
+  \item \textbf{Ruído.} Estimamos o ruído como a diferença entre a imagem e uma
+    versão suavizada por filtro de mediana. Calculamos a variância do ruído em
+    blocos de $32\times32$ e o coeficiente de variação (desvio sobre média) entre
+    esses blocos; um coeficiente alto indica regiões com ruído incompatível e
+    reduz o score \cite{mahdian2009}.
+  \item \textbf{Pontos de fuga (VP).} Detectamos retas com Canny e a transformada
+    de Hough probabilística e estimamos o ponto de fuga pela mediana das
+    interseções de muitos pares de retas sorteados, num esquema do tipo RANSAC.
+    Medimos então a divergência angular média das retas em relação a esse ponto;
+    perspectiva quebrada baixa o score.
+  \item \textbf{Escala/blob.} Após operações morfológicas, extraímos os maiores
+    contornos (objetos) e comparamos a razão real entre as alturas com a razão
+    esperada pela posição vertical de cada um na cena (perspectiva). Divergências
+    grandes na razão logarítmica são marcadas como anomalias e reduzem o score.
+\end{itemize}
+
+\subsection{Fusão por Random Forest}
+
+A primeira versão do detector combinava os quatro scores por pesos adaptativos ---
+mais peso para ELA e ruído em retratos (poucas retas) e mais peso para pontos de
+fuga em cenas arquitetônicas (muitas retas). Esses pesos eram fixados à mão.
+Substituímos essa combinação por um classificador \textit{Random Forest} treinado,
+que recebe como entrada os quatro scores e aprende a fronteira de decisão a partir
+dos rótulos Au=0 (autêntica) e Tp=1 (adulterada). O modelo é treinado fora de
+linha, persistido em disco em formato \texttt{.pkl}, e carregado na inferência.
+Para uma imagem nova enviada por \textit{upload}, as quatro análises rodam, o
+\textit{Random Forest} devolve a probabilidade de adulteração, e o sistema reporta
+a classe e a probabilidade. A fusão deixa de ser ajustada à mão e passa a ser
+guiada por dados, fácil de retreinar quando o conjunto cresce; a soma de pesos
+antiga permanece apenas como alternativa quando ainda não há modelo treinado.
+
+\subsection{Calibração e decisão}
+
+A saída do detector é um score de 0 a 100, mapeado em cinco faixas por limiares
+fixos: até 20, MANIPULADA; até 40, ALTA CHANCE DE MANIPULAÇÃO; até 60,
+INCONCLUSIVA; até 80, CONSISTÊNCIA MÉDIA; acima de 80, CONSISTENTE. Com o
+\textit{Random Forest}, o score é derivado da probabilidade de autenticidade
+($(1-P_{\text{adulterada}})\times 100$), de modo que a mesma escala de cinco
+faixas continua válida, e a decisão binária autêntica/adulterada é a própria
+predição do classificador. Reportamos precisão, revocação, F1 e acurácia sobre o
+conjunto de teste.
+
+\subsection{Arquitetura distribuída (projetada)}
+
+A camada distribuída está projetada, mas ainda não implementada na versão atual;
+descrevemos aqui o desenho previsto. As máquinas se comunicariam por uma rede
+privada montada com WireGuard \cite{donenfeld2017wireguard}. Como as máquinas do
+grupo ficam atrás de NAT, sem IP público, usaríamos uma instância EC2 na AWS, com
+IP fixo, como concentrador (\textit{hub}) da rede: o ponto de endereço estável ao
+qual todas se conectam, na sub-rede \texttt{10.0.0.0/24}, e por onde o tráfego
+entre elas é roteado. O hub não executaria lógica da aplicação; serviria apenas
+de rota.
+
+Sobre essa rede rodaria o sistema no modelo \textit{chief}/\textit{worker}. O
+\textit{chief} particionaria a lista de imagens em fatias, uma por nó, e
+despacharia a cada \textit{worker} a sua fatia. Cada \textit{worker} exporia um
+servidor XML-RPC com as operações de \textit{ping} e análise de lote; o
+\textit{chief} chamaria esses servidores em paralelo, com uma \textit{thread} por
+nó, e agregaria os resultados à medida que voltassem. Uma decisão importante do
+desenho é não trafegar imagens pela rede: como todo o tráfego passaria pelo hub,
+mandar os bytes das imagens transformaria a banda da instância em gargalo. Por
+isso cada \textit{worker} guardaria uma cópia local do CASIA 2.0, e pela rede
+circulariam apenas os caminhos relativos das imagens e os scores de volta, que são
+pequenos.
+
+\subsection{Paralelismo dentro do nó}
+
+Dentro de cada nó, a análise das imagens é paralelizada com a biblioteca
+\texttt{multiprocessing} do Python, dimensionando o \textit{pool} pelo número de
+núcleos da máquina. Usamos processos, e não \textit{threads}, porque o trabalho é
+limitado por CPU e o GIL do Python impediria paralelismo real com
+\textit{threads}; o método de início é \texttt{spawn}, padrão no Windows. Cada
+imagem é processada de forma independente por uma função que roda as quatro
+análises e devolve apenas os scores (sem as imagens de visualização), o que torna
+o custo de serialização entre processos pequeno. Esse mesmo \textit{pool} é
+reutilizado tanto na extração de \textit{features} para o treino quanto na
+avaliação de conjuntos e nos \textit{benchmarks}.
+
+\subsection{Metodologia de avaliação}
+
+Avaliamos duas coisas distintas, que não devem ser misturadas: a qualidade da
+detecção e o desempenho.
+
+Para a detecção, reportamos precisão, revocação, F1 e acurácia do \textit{Random
+Forest} sobre o conjunto de teste, com validação cruzada de cinco dobras, e
+inspecionamos a importância de cada uma das quatro análises segundo o modelo.
+
+Para o desempenho, no eixo do paralelismo dentro de um nó, medimos escalabilidade
+forte (mesma carga, variando o número de \textit{workers} do \textit{pool}: 1, 2,
+4 e o total de núcleos) e escalabilidade fraca (carga por \textit{worker} fixa,
+crescendo dados e \textit{workers} juntos), interpretadas à luz das leis de Amdahl
+\cite{amdahl1967} e de Gustafson \cite{gustafson1988}. Além de tempo e
+\textit{speedup} ($T_1/T_N$), calculamos a eficiência ($\text{speedup}/N$) e um
+termo de \textit{overhead} ($\max(0,\, T_N \cdot N - T_1)$), que estima o custo de
+\textit{fork} e de serialização. No eixo distribuído, já projetado, a avaliação
+prevista compara a execução em uma única máquina com a execução entre vários nós
+sobre a mesma carga; a diferença mediria o \textit{overhead} de rede e
+coordenação. Os \textit{benchmarks} de paralelismo são disparados tanto pela linha
+de comando quanto pela interface web, que gera um painel com as curvas de
+\textit{speedup}, eficiência, tempo e \textit{overhead}.
+
+\section{Resultados}
+
+A infraestrutura de detecção e de paralelismo está implementada e em uso. Estão
+prontos: as quatro análises forenses (ELA, ruído, pontos de fuga e escala), a
+combinação por pesos adaptativos como alternativa, o classificador \textit{Random
+Forest} com treino, persistência em \texttt{.pkl} e predição por \textit{upload},
+a API web em Flask (análise de imagem única com visualizações, lote, conjunto
+rotulado com métricas, treino e \textit{status} do modelo, e \textit{benchmark}),
+os \textit{benchmarks} de escalabilidade forte e fraca, e a interface web
+(HTML/JS/CSS) com telas de \textit{dashboard}, envio de imagem, avaliação de
+conjunto e painel de \textit{benchmark}. A camada distribuída multi-máquina
+(WireGuard, hub EC2 e \textit{chief}/\textit{worker} sobre XML-RPC) está projetada,
+mas ainda não implementada nesta versão.
+
+A Tabela~\ref{tab:importancias} traz um resultado concreto já obtido: a
+importância que o \textit{Random Forest} atribuiu a cada análise, medida numa
+execução sobre a amostra embarcada (50~Au e 50~Tp). Os pontos de fuga e o ELA
+foram os sinais mais informativos, seguidos pelo ruído; a escala contribuiu menos.
+
+\begin{table}[ht]
+\centering
+\caption{Importância das quatro análises segundo o Random Forest (amostra reduzida)}
+\label{tab:importancias}
+\begin{tabular}{lc}
+\toprule
+\textbf{Análise} & \textbf{Importância} \\
+\midrule
+Pontos de fuga (VP) & 34{,}5\% \\
+ELA                 & 29{,}6\% \\
+Ruído               & 25{,}0\% \\
+Escala              & 10{,}9\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+A Tabela~\ref{tab:deteccao} mostra como reportamos a qualidade da detecção. Na
+amostra reduzida do repositório, com apenas quatro \textit{features} e poucas
+imagens, o \textit{Random Forest} ficou próximo do acaso (acurácia em torno de
+50\% em validação cruzada) --- esperado nesse regime, em que os scores saturam e
+há poucos exemplos. A avaliação definitiva, sobre o CASIA 2.0 completo e,
+possivelmente, com \textit{features} adicionais (estatísticas brutas de ELA e
+ruído), está em curso e seus valores serão consolidados na execução final.
+
+\begin{table}[ht]
+\centering
+\caption{Métricas de detecção (a consolidar sobre o CASIA 2.0 completo)}
+\label{tab:deteccao}
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Configuração} & \textbf{Precisão} & \textbf{Revocação} & \textbf{F1} & \textbf{Acurácia} \\
+\midrule
+Pesos adaptativos (referência)      & --- & --- & --- & --- \\
+Random Forest (amostra reduzida)    & --- & --- & --- & $\sim$50\% \\
+Random Forest (CASIA 2.0 completo)  & --- & --- & --- & --- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+A Tabela~\ref{tab:escalaforte} apresenta o formato da escalabilidade forte no
+eixo de \textit{workers}, fixando o conjunto de imagens. O \textit{speedup}
+esperado cresce com o número de \textit{workers}, mas com retorno decrescente
+conforme a fração sequencial passa a dominar, como prevê a lei de Amdahl
+\cite{amdahl1967}.
+
+\begin{table}[ht]
+\centering
+\caption{Escalabilidade forte no eixo de \textit{workers}, carga fixa (a preencher)}
+\label{tab:escalaforte}
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Workers} & \textbf{Tempo (s)} & \textbf{Speedup} & \textbf{Eficiência} & \textbf{Overhead (s)} \\
+\midrule
+1 & --- & 1{,}00 & 1{,}00 & 0{,}00 \\
+2 & --- & --- & --- & --- \\
+4 & --- & --- & --- & --- \\
+$N$ núcleos & --- & --- & --- & --- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+A Tabela~\ref{tab:overhead} antecipa o experimento do eixo distribuído, ainda
+planejado: a diferença entre a execução numa única máquina e a execução entre
+vários nós isolaria o \textit{overhead} de serialização, roteamento pelo hub e
+coordenação por \textit{threads}.
+
+\begin{table}[ht]
+\centering
+\caption{Custo da distribuição: máquina única \textit{vs.} distribuída (planejado)}
+\label{tab:overhead}
+\begin{tabular}{lc}
+\toprule
+\textbf{Cenário} & \textbf{Tempo total (s)} \\
+\midrule
+Uma máquina (todos os núcleos)          & --- \\
+Distribuído (vários \textit{workers})   & --- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% TODO: ao consolidar os dados, acrescentar o painel de CP gerado pela interface
+% (speedup vs Amdahl, eficiencia forte/fraca, tempo e overhead) como figura.
+
+\section{Conclusões}
+
+Este trabalho descreveu o DeepForensics, um sistema para classificar imagens do
+CASIA 2.0 como autênticas ou adulteradas combinando processamento de imagens,
+computação paralela e computação distribuída. A contribuição principal não está
+em um detector novo, e sim na forma de orquestrar quatro análises passivas
+clássicas --- ELA, ruído, pontos de fuga e escala --- fundidas por um
+\textit{Random Forest}, sobre um sistema paralelo e, em projeto, distribuído, com
+uma saída interpretável em cinco faixas e uma interface web de operação.
+
+Algumas decisões se mostraram acertadas ainda na fase de projeto. Padronizar
+análises baratas, todas em CPU, manteve o custo por imagem baixo e fez o sistema
+cobrir todo o conjunto, inclusive os formatos sem perda. Trocar a soma de pesos
+ajustada à mão por um \textit{Random Forest} deixou a fusão dos sinais guiada por
+dados e trivial de retreinar. Processar cada imagem de forma independente, com um
+\textit{pool} de processos que troca apenas scores, viabilizou o paralelismo sem
+um custo grande de serialização.
+
+O trabalho tem limitações que reconhecemos. A avaliação consolidada ainda depende
+de rodar o conjunto completo: na amostra reduzida, com apenas quatro
+\textit{features}, o classificador fica próximo do acaso, o que indica a
+necessidade de mais dados e, provavelmente, de descritores adicionais. A camada
+distribuída está desenhada, mas não implementada; quando estiver, sua partição de
+carga será estática, dividida por igual, e não reequilibra sozinha quando os nós
+têm desempenho diferente. Por fim, a gerência das chaves do WireGuard, prevista a
+partir de um único ponto, não seria aceitável num cenário real, em que cada
+máquina geraria a própria chave privada.
+
+Como trabalho futuro, vale concluir a avaliação sobre o CASIA 2.0 completo,
+enriquecer o vetor de \textit{features} com estatísticas brutas de ELA e ruído,
+implementar de fato a camada \textit{chief}/\textit{worker} sobre a rede WireGuard
+e substituir a partição estática por uma fila dinâmica de trabalho.
+
+\bibliographystyle{sbc}
+\bibliography{sbc-template}
+
+\end{document}
