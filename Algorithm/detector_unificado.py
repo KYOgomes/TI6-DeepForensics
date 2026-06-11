@@ -426,6 +426,23 @@ def _analisar_leve(path):
     return r
 
 
+def _warm_noop(_):
+    """Tarefa trivial usada para pré-aquecer o Pool (top-level p/ ser picklável)."""
+    return True
+
+
+def _warm_pool(pool, n):
+    """Paga o custo de spawn + import das libs nos workers ANTES de cronometrar.
+
+    No macOS o multiprocessing usa 'spawn': cada worker reimporta cv2/numpy/etc.,
+    um custo fixo e único (dezenas a centenas de ms por processo). Em cargas
+    pequenas esse custo domina e mascara o ganho real da paralelização, podendo
+    até produzir speedup < 1. Aquecendo o pool, o benchmark passa a medir a
+    região efetivamente paralelizável (lei de Amdahl), e não a criação de
+    processos — que num serviço real de longa duração é paga uma única vez."""
+    pool.map(_warm_noop, range(max(n * 2, n)))
+
+
 def _aplicar_rf(resultados):
     """Aplica o RF (no processo principal) sobre lista de resultados de _analisar_leve.
     O modelo é carregado uma única vez via cache global — sem overhead por worker."""
@@ -555,23 +572,32 @@ def analisar_para_api(image_path, include_visuals=True):
     return payload
 
 
-def benchmark_paralelo_api(imagens, configs_workers=None, incluir_fraca=True):
-    """Wrapper de benchmark que devolve dict JSON-serializável."""
+def benchmark_paralelo_api(imagens, configs_workers=None, incluir_fraca=True,
+                           return_resultados=False):
+    """Wrapper de benchmark que devolve dict JSON-serializável.
+
+    `tempo_total` é o relógio de parede REAL de toda a suíte (T1 + cada config
+    paralela + aquecimentos + escalabilidade fraca) — o tempo que o usuário de
+    fato espera. `return_resultados=True` anexa em `_resultados` os resultados do
+    pipeline capturados na passada sequencial, evitando reanalisar as imagens."""
     if not imagens:
         return {'ok': False, 'erro': 'nenhuma imagem'}
     if configs_workers is None:
         configs_workers = sorted(set([1, 2, 4, cpu_count()]))
 
-    metricas_forte, T1 = _benchmark_paralelo(imagens, configs_workers)
+    t_wall0 = time.perf_counter()
+    metricas_forte, T1, resultados = _benchmark_paralelo(imagens, configs_workers)
     metricas_fraca = (_benchmark_escalabilidade_fraca(imagens, configs_workers)
                       if incluir_fraca else [])
+    tempo_total = time.perf_counter() - t_wall0
 
-    return {
+    out = {
         'ok'            : True,
         'n_imagens'     : len(imagens),
         'cpu_count'     : cpu_count(),
         'configs'       : configs_workers,
         'T1'            : float(T1),
+        'tempo_total'   : float(tempo_total),
         'forte'         : [{k: (float(v) if isinstance(v,(int,float)) else v)
                             for k, v in m.items()} for m in metricas_forte],
         'fraca'         : [{k: (float(v) if isinstance(v,(int,float)) else v)
@@ -580,6 +606,9 @@ def benchmark_paralelo_api(imagens, configs_workers=None, incluir_fraca=True):
         'unidade'       : 'imagens',
         'titulo'        : f'Paralelizacao das {len(imagens)} imagens',
     }
+    if return_resultados:
+        out['_resultados'] = resultados
+    return out
 
 
 # ══════════════════════════════════════════════
@@ -628,6 +657,7 @@ def benchmark_analises_api(image_path, configs_workers=None):
         configs_workers = [1] + configs_workers
 
     # ── Escalabilidade forte: mesma carga (4 análises), variando workers ──
+    t_wall0 = time.perf_counter()
     t0 = time.perf_counter()
     for t in tarefas:
         _task_analise(t)
@@ -638,10 +668,11 @@ def benchmark_analises_api(image_path, configs_workers=None):
     for n in configs_workers:
         if n <= 1:
             continue
-        t0 = time.perf_counter()
         with Pool(n) as pool:
+            _warm_pool(pool, n)                  # spawn + imports FORA do cronômetro
+            t0 = time.perf_counter()
             pool.map(_task_analise, tarefas)
-        TN = time.perf_counter() - t0
+            TN = time.perf_counter() - t0
         speedup = T1 / TN if TN > 0 else 1.0
         forte.append({
             'workers':    n,
@@ -663,12 +694,15 @@ def benchmark_analises_api(image_path, configs_workers=None):
             TN = time.perf_counter() - t0
             T1f = TN
         else:
-            t0 = time.perf_counter()
             with Pool(n) as pool:
+                _warm_pool(pool, n)
+                t0 = time.perf_counter()
                 pool.map(_task_analise, carga)
-            TN = time.perf_counter() - t0
+                TN = time.perf_counter() - t0
         ef = (T1f / TN) if T1f and TN > 0 else 1.0
         fraca.append({'workers': n, 'tempo': TN, 'eficiencia': round(ef, 3)})
+
+    tempo_total = time.perf_counter() - t_wall0
 
     return {
         'ok'        : True,
@@ -676,6 +710,7 @@ def benchmark_analises_api(image_path, configs_workers=None):
         'cpu_count' : cpu_count(),
         'configs'   : configs_workers,
         'T1'        : float(T1),
+        'tempo_total': float(tempo_total),
         'forte'     : [{k: (float(v) if isinstance(v, (int, float)) else v)
                         for k, v in m.items()} for m in forte],
         'fraca'     : [{k: (float(v) if isinstance(v, (int, float)) else v)
@@ -777,22 +812,36 @@ def avaliar_dataset_api(au_paths, sp_paths, workers=None):
 
 
 def analisar_lote_api(paths, workers=None):
-    """Versão sem rótulos — distribuição + ranking de suspeitas."""
+    """Versão sem rótulos — distribuição + ranking de suspeitas.
+
+    A análise e o benchmark de paralelização são produzidos por UMA única suíte:
+    `benchmark_paralelo_api` roda o pipeline (sequencial, captura os resultados) e
+    mede o speedup com pools pré-aquecidos. Assim não há execução dupla, e os
+    tempos exibidos são coerentes com o benchmark mostrado ao lado.
+
+    Campos de tempo:
+      • `tempo`       = melhor tempo paralelo medido (custo real de produção).
+      • `tempo_total` = relógio de parede de toda a suíte (o que o usuário espera).
+    """
     if workers is None:
         workers = cpu_count()
     if not paths:
         return {'ok': False, 'erro': 'nenhuma imagem'}
 
-    t_ini = time.perf_counter()
-    if workers > 1 and len(paths) > 1:
-        with Pool(workers) as pool:
-            resultados = pool.map(_analisar_leve, paths)
-    else:
-        resultados = [_analisar_leve(p) for p in paths]
-    elapsed = time.perf_counter() - t_ini
+    # Configs de workers para o estudo de speedup (limitadas pelo nº de imagens).
+    configs = sorted(set([1, 2, 4, cpu_count()]))
+    configs = [w for w in configs if w <= max(len(paths), 1)] or [1]
+
+    bm = benchmark_paralelo_api(paths, configs_workers=configs,
+                                incluir_fraca=True, return_resultados=True)
+    resultados = bm.pop('_resultados')             # 1 única execução do pipeline
+    bm['titulo'] = f"Paralelizacao das {len(paths)} imagens enviadas"
 
     # RF aplicado no processo principal (cache único, sem overhead por worker)
     _aplicar_rf(resultados)
+
+    # tempo de análise = melhor (menor) tempo paralelo medido
+    tempo_analise = min((m['tempo'] for m in bm['forte']), default=bm['T1'])
 
     niveis = {'MANIPULADA':0,'ALTA CHANCE DE MANIPULACAO':0,
               'INCONCLUSIVA':0,'CONSISTENCIA MEDIA':0,'CONSISTENTE':0}
@@ -804,7 +853,9 @@ def analisar_lote_api(paths, workers=None):
         'ok'        : True,
         'n_imagens' : len(paths),
         'workers'   : workers,
-        'tempo'     : float(elapsed),
+        'tempo'     : float(tempo_analise),
+        'tempo_total': float(bm['tempo_total']),
+        'benchmark' : bm,
         'distribuicao': niveis,
         'resultados': [{
             'arquivo'     : os.path.basename(r['path']),
@@ -965,19 +1016,22 @@ def modo_imagem_unica(image_path, out=OUTPUT_UNICA):
 def _benchmark_paralelo(imagens, configs_workers):
     """
     Roda o pipeline em `imagens` com cada configuração de workers.
-    Retorna lista de dicts com métricas por configuração.
+    Retorna (metricas, T1, resultados).
 
-    Passo 1: sequencial puro (T1) — sem Pool, sem overhead de fork.
-    Passo 2: Pool com N workers para cada N em configs_workers.
+    Passo 1: sequencial puro (T1) — sem Pool. Captura os resultados do pipeline
+             (idênticos em qualquer config), que são devolvidos para o chamador
+             reutilizar — assim a análise do lote roda UMA única vez.
+    Passo 2: Pool com N workers, PRÉ-AQUECIDO, para cada N em configs_workers.
+             O aquecimento tira o custo fixo de spawn/import do cronômetro, de
+             modo que TN reflita a computação paralela real (lei de Amdahl).
     Passo 3: calcula speedup, eficiência e overhead.
     """
     metricas = []
 
-    # ── Passo 1: T1 — sequencial puro ─────────
+    # ── Passo 1: T1 — sequencial puro (e captura dos resultados) ─────────
     print(f"\n  [CP] Rodando sequencial (baseline T1)...")
     t_ini = time.perf_counter()
-    for path in imagens:
-        _analisar_leve(path)
+    resultados = [_analisar_leve(path) for path in imagens]
     T1 = time.perf_counter() - t_ini
     print(f"       T1 = {T1:.3f}s  ({len(imagens)} imagens)")
 
@@ -990,15 +1044,16 @@ def _benchmark_paralelo(imagens, configs_workers):
         'label':      'Sequencial\n(baseline)',
     })
 
-    # ── Passo 2: paralelo com N workers ───────
+    # ── Passo 2: paralelo com N workers (pool pré-aquecido) ───────
     for n in configs_workers:
         if n <= 1:
             continue  # já medimos o caso sequencial acima
-        print(f"  [CP] Pool com {n} workers...")
-        t_ini = time.perf_counter()
+        print(f"  [CP] Pool com {n} workers (pré-aquecido)...")
         with Pool(n) as pool:
+            _warm_pool(pool, n)                  # spawn + imports FORA do cronômetro
+            t_ini = time.perf_counter()
             pool.map(_analisar_leve, imagens)
-        TN = time.perf_counter() - t_ini
+            TN = time.perf_counter() - t_ini
 
         # ── Passo 3: métricas ─────────────────
         speedup    = T1 / TN if TN > 0 else 1.0
@@ -1016,22 +1071,32 @@ def _benchmark_paralelo(imagens, configs_workers):
         print(f"       TN={TN:.3f}s  speedup={speedup:.2f}x  "
               f"eficiência={eficiencia:.2f}  overhead={overhead:.3f}s")
 
-    return metricas, T1
+    return metricas, T1, resultados
 
 
 def _benchmark_escalabilidade_fraca(imagens_base, configs_workers):
     """
-    Escalabilidade fraca: cada worker recebe 1 imagem.
-    Mede se o tempo permanece constante ao aumentar workers + carga.
-    Ideal: tempo constante (eficiência = 1.0 para todos os N).
+    Escalabilidade fraca: cada worker recebe um LOTE FIXO de imagens (a carga
+    cresce proporcionalmente ao nº de workers). Mede se o tempo permanece
+    constante ao aumentar workers + carga juntos. Ideal: tempo constante
+    (eficiência = 1.0 para todos os N).
+
+    Usamos um lote por worker (e não 1 imagem) para que a computação útil domine
+    o overhead fixo de pickling/IPC — caso contrário, com ~15 ms/imagem, o custo
+    de transporte mascararia o resultado. Pools são pré-aquecidos.
     """
     print(f"\n  [CP] Escalabilidade Fraca...")
     resultados_fraca = []
     T1_fraca = None
 
+    # Lote por worker: grande o bastante p/ a computação dominar o overhead.
+    base = max(1, len(imagens_base))
+    por_worker = max(4, min(8, base))
+
     for n in configs_workers:
-        # Carga proporcional: n imagens para n workers
-        imgs_fraca = (imagens_base * ((n // len(imagens_base)) + 1))[:n]
+        # Carga proporcional: n × por_worker imagens para n workers.
+        total = n * por_worker
+        imgs_fraca = (imagens_base * ((total // base) + 1))[:total]
 
         if n == 1:
             t_ini = time.perf_counter()
@@ -1040,10 +1105,11 @@ def _benchmark_escalabilidade_fraca(imagens_base, configs_workers):
             TN = time.perf_counter() - t_ini
             T1_fraca = TN
         else:
-            t_ini = time.perf_counter()
             with Pool(n) as pool:
+                _warm_pool(pool, n)
+                t_ini = time.perf_counter()
                 pool.map(_analisar_leve, imgs_fraca)
-            TN = time.perf_counter() - t_ini
+                TN = time.perf_counter() - t_ini
 
         ef = (T1_fraca / TN) if T1_fraca and TN > 0 else 1.0
         resultados_fraca.append({'workers': n, 'tempo': TN, 'eficiencia': round(ef, 3)})
@@ -1218,7 +1284,7 @@ def modo_dataset(pasta_au='Au', pasta_sp='Sp'):
     print(f"\n⚡ Iniciando benchmark CP com configs: {configs_workers} workers...")
 
     # Escalabilidade forte (mesma carga total, workers variável)
-    metricas_forte, T1 = _benchmark_paralelo(todas, configs_workers)
+    metricas_forte, T1, _ = _benchmark_paralelo(todas, configs_workers)
 
     # Escalabilidade fraca (carga proporcional ao nº de workers)
     # Usa a lista completa de imagens como base (repete se necessário)
@@ -1299,7 +1365,7 @@ def modo_pasta(pasta):
     print(f"⚡ Iniciando benchmark CP com configs: {configs_workers} workers...")
 
     # Escalabilidade forte
-    metricas_forte, T1 = _benchmark_paralelo(imagens, configs_workers)
+    metricas_forte, T1, _ = _benchmark_paralelo(imagens, configs_workers)
 
     # Escalabilidade fraca
     metricas_fraca = _benchmark_escalabilidade_fraca(imagens, configs_workers)

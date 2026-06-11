@@ -145,17 +145,9 @@ def info():
 # ─────────────────────────────────────────────
 # Benchmark CP — roda sobre o que o usuário enviou (não sobre o dataset):
 #   • imagem única → distribui as 4 análises (VP/ELA/Ruído/Escala) entre workers
-#   • lote         → distribui as N imagens enviadas entre workers
+#   • lote         → analisar_lote_api já embute o benchmark das N imagens
+#                    numa única suíte (sem reexecução), ver detector_unificado.py
 # ─────────────────────────────────────────────
-def _bench_lote(paths):
-    """Benchmark de CP distribuindo as imagens enviadas entre os workers."""
-    cfg = sorted(set([1, 2, 4, cpu_count()]))
-    cfg = [w for w in cfg if w <= max(len(paths), 1)] or [1]
-    bm = benchmark_paralelo_api(paths, configs_workers=cfg, incluir_fraca=True)
-    if bm and bm.get('ok'):
-        bm['titulo'] = f"Paralelizacao das {len(paths)} imagens enviadas"
-    return bm
-
 
 # ─────────────────────────────────────────────
 # Modo 1 — imagem única (pipeline completo + visuais + benchmark das 4 análises)
@@ -204,12 +196,11 @@ def analyze_batch():
         if not paths:
             return jsonify({'ok': False, 'erro': 'nenhum arquivo valido'}), 400
 
+        # analisar_lote_api já roda a análise + o benchmark de paralelização
+        # numa única suíte (sem execução dupla) e devolve result['benchmark'].
         result = analisar_lote_api(paths, workers=workers)
         result['modo']    = mode
         result['limite']  = MAX_BATCH
-        bm = _bench_lote(paths)            # distribui as N imagens enviadas
-        if bm and bm.get('ok'):
-            result['benchmark'] = bm
         return jsonify(result)
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
@@ -421,7 +412,7 @@ def static_files(filename):
 
 if __name__ == '__main__':
     freeze_support()  # necessário no Windows p/ multiprocessing
-    port = int(os.environ.get('PORT', 5000))
+    port = int(os.environ.get('PORT', 8080))
     print(f"\n  DeepForensics API em http://127.0.0.1:{port}")
     print(f"  ROOT estaticos: {ROOT}")
     print(f"  CPUs disponiveis: {cpu_count()}\n")
