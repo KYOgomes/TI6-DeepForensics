@@ -406,7 +406,15 @@ crescendo dados e \textit{workers} juntos), interpretadas à luz das leis de Amd
 \cite{amdahl1967} e de Gustafson \cite{gustafson1988}. Além de tempo e
 \textit{speedup} ($T_1/T_N$), calculamos a eficiência ($\text{speedup}/N$) e um
 termo de \textit{overhead} ($\max(0,\, T_N \cdot N - T_1)$), que estima o custo de
-\textit{fork} e de serialização. No eixo distribuído, já projetado, a avaliação
+\textit{fork} e de serialização. Como o \texttt{multiprocessing} em macOS usa o
+método \textit{spawn} --- cada \textit{worker} reimporta as bibliotecas pesadas
+(\texttt{OpenCV}, \texttt{NumPy}) ao iniciar ---, o custo fixo e único de criação
+dos processos pode dominar cargas pequenas e mascarar o ganho real. Para isolar a
+região efetivamente paralelizável (na acepção de Amdahl), pré-aquecemos o
+\textit{pool} com tarefas triviais antes de iniciar a cronometragem; assim, $T_N$
+reflete a computação distribuída entre os \textit{workers}, e não a inicialização
+dos processos, que num serviço de longa duração é paga uma só vez. No eixo
+distribuído, já projetado, a avaliação
 prevista compara a execução em uma única máquina com a execução entre vários nós
 sobre a mesma carga; a diferença mediria o \textit{overhead} de rede e
 coordenação. Os \textit{benchmarks} de paralelismo são disparados tanto pela linha
@@ -530,43 +538,91 @@ normalizados. Vale notar que o ELA isolado registrou AUC~0,407 (abaixo do acaso)
 na amostra reduzida: com apenas 25 imagens de teste e alta variância, esse valor
 deve ser interpretado com cautela e poderá ser revisado com o CASIA 2.0 completo.
 
-A Tabela~\ref{tab:escalaforte} apresenta o formato da escalabilidade forte no
-eixo de \textit{workers}, fixando o conjunto de imagens. O \textit{speedup}
-esperado cresce com o número de \textit{workers}, mas com retorno decrescente
-conforme a fração sequencial passa a dominar, como prevê a lei de Amdahl
-\cite{amdahl1967}.
+A Tabela~\ref{tab:escalaforte} apresenta a escalabilidade forte no eixo de
+\textit{workers}, fixando o conjunto de 70~imagens (50~Au + 20~Tp do CASIA~2.0)
+e variando o número de processos do \textit{pool}. Os valores são a mediana de
+três execuções numa máquina de 10~núcleos. O \textit{speedup} cresce com o número
+de \textit{workers}, mas com retorno decrescente: de 1 para 2 \textit{workers} o
+ganho é quase ideal (1,75$\times$, eficiência 0,88), de 4 \textit{workers}
+chega-se a 2,79$\times$ (eficiência 0,70) e, com os 10~núcleos, o \textit{speedup}
+satura em 3,16$\times$, com a eficiência caindo para 0,32 --- exatamente o
+comportamento previsto pela lei de Amdahl \cite{amdahl1967} quando a fração
+sequencial passa a dominar.
 
 \begin{table}[ht]
 \centering
-\caption{Escalabilidade forte no eixo de \textit{workers}, carga fixa (a preencher)}
+\caption{Escalabilidade forte no eixo de \textit{workers} (70 imagens, carga fixa; mediana de 3 execuções, 10 núcleos)}
 \label{tab:escalaforte}
 \begin{tabular}{lcccc}
 \toprule
 \textbf{Workers} & \textbf{Tempo (s)} & \textbf{Speedup} & \textbf{Eficiência} & \textbf{Overhead (s)} \\
 \midrule
-1 & --- & 1{,}00 & 1{,}00 & 0{,}00 \\
-2 & --- & --- & --- & --- \\
-4 & --- & --- & --- & --- \\
-$N$ núcleos & --- & --- & --- & --- \\
+1               & 0{,}841 & 1{,}00 & 1{,}00 & 0{,}000 \\
+2               & 0{,}485 & 1{,}75 & 0{,}88 & 0{,}119 \\
+4               & 0{,}301 & 2{,}79 & 0{,}70 & 0{,}363 \\
+10 (todos)      & 0{,}290 & 3{,}16 & 0{,}32 & 1{,}982 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-A Tabela~\ref{tab:overhead} antecipa o experimento do eixo distribuído, ainda
-planejado: a diferença entre a execução numa única máquina e a execução entre
-vários nós isolaria o \textit{overhead} de serialização, roteamento pelo hub e
-coordenação por \textit{threads}.
+Ajustando a lei de Amdahl aos pontos medidos, a fração paralelizável da carga
+fica em torno de $f \approx 0{,}82$, o que projeta um \textit{speedup} máximo
+assintótico de cerca de 5,6$\times$ ($1/(1-f)$). A porção sequencial residual
+($\approx 18\%$) corresponde ao despacho das tarefas, à serialização dos
+resultados de volta ao processo principal e à etapa de agregação com o
+\textit{Random Forest}, que roda uma única vez fora do \textit{pool}. O termo de
+\textit{overhead} torna esse custo explícito: cresce de 0,12~s com 2
+\textit{workers} para 1,98~s com 10, indicando que, para a carga e o custo por
+imagem deste sistema ($\approx$~12~ms), a configuração mais eficiente está em
+torno de 4 \textit{workers}, enquanto usar todos os núcleos só compensa quando o
+volume de imagens cresce a ponto de amortizar a coordenação.
+
+A Tabela~\ref{tab:escalafraca} mostra a escalabilidade fraca: cada \textit{worker}
+recebe um lote fixo de imagens, de modo que dados e \textit{workers} crescem
+juntos. O ideal de Gustafson \cite{gustafson1988} seria tempo constante
+(eficiência 1,0); na prática, a eficiência cai de 1,00 para 0,33 ao ir de 1 a 10
+\textit{workers}, refletindo o custo de transporte (\textit{pickling}/IPC) de um
+número crescente de imagens entre os processos --- um gargalo de banda de
+comunicação, não de cômputo.
 
 \begin{table}[ht]
 \centering
-\caption{Custo da distribuição: máquina única \textit{vs.} distribuída (planejado)}
-\label{tab:overhead}
-\begin{tabular}{lc}
+\caption{Escalabilidade fraca (lote fixo por \textit{worker}; mediana de 3 execuções, 10 núcleos)}
+\label{tab:escalafraca}
+\begin{tabular}{lcc}
 \toprule
-\textbf{Cenário} & \textbf{Tempo total (s)} \\
+\textbf{Workers} & \textbf{Imagens} & \textbf{Tempo (s)} \\
 \midrule
-Uma máquina (todos os núcleos)          & --- \\
-Distribuído (vários \textit{workers})   & --- \\
+1          & 8  & 0{,}090 \\
+2          & 16 & 0{,}116 \\
+4          & 32 & 0{,}127 \\
+10 (todos) & 80 & 0{,}288 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+A Tabela~\ref{tab:overhead} consolida o custo numa única máquina: a execução
+puramente sequencial leva 0,841~s para as 70~imagens, enquanto o \textit{pool}
+com os 10~núcleos reduz esse tempo para 0,290~s --- um ganho de 2,90$\times$ no
+trecho de análise. A suíte completa de \textit{benchmark} (sequencial mais todas
+as configurações paralelas e a escalabilidade fraca) leva cerca de 4,4~s de
+relógio de parede; esse é o tempo que o usuário aguarda quando o painel de
+computação paralela é gerado junto com os resultados. O eixo distribuído
+multi-máquina permanece como trabalho futuro: a diferença entre a execução numa
+única máquina e a execução entre vários nós isolaria o \textit{overhead} de
+serialização, roteamento pelo \textit{hub} e coordenação por \textit{threads}.
+
+\begin{table}[ht]
+\centering
+\caption{Custo numa única máquina: sequencial \textit{vs.} paralelo (70 imagens)}
+\label{tab:overhead}
+\begin{tabular}{lcc}
+\toprule
+\textbf{Cenário} & \textbf{Tempo (s)} & \textbf{Speedup} \\
+\midrule
+Sequencial (1 \textit{worker})        & 0{,}841 & 1{,}00$\times$ \\
+Paralelo (10 núcleos)                 & 0{,}290 & 2{,}90$\times$ \\
+Distribuído (vários nós)              & \multicolumn{2}{c}{trabalho futuro} \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -603,6 +659,22 @@ teste, com validação cruzada de cinco dobras apontando 62\%~$\pm$~8,6\% de
 acurácia --- valores modestos mas acima do acaso, com variância que diminuiu após
 a calibração dos fatores (era $\pm$12,1\% antes). A avaliação consolidada sobre o
 CASIA 2.0 completo é necessária para confirmar se esse ganho se sustenta.
+
+No eixo do paralelismo, o sistema apresentou \textit{speedup} de até 3,16$\times$
+em 10~núcleos (eficiência 0,32), com fração paralelizável estimada em
+$f \approx 0{,}82$. O dado mais instrutivo, porém, não foi o ganho máximo, e sim
+o retorno decrescente: a configuração de 4 \textit{workers} entregou 2,79$\times$
+com eficiência 0,70, ao passo que dobrar para 10~núcleos acrescentou pouco ao
+\textit{speedup} mas quase quadruplicou o \textit{overhead} (de 0,36~s para
+1,98~s). Como o custo por imagem é baixo ($\approx$~12~ms), o trabalho útil de
+cada tarefa rivaliza com o custo de transportá-la entre processos; abaixo de um
+certo volume, paralelizar agressivamente deixa de compensar. Esse é um resultado
+honesto de computação paralela --- nem todo problema se beneficia de mais
+\textit{workers}, e a granularidade da tarefa importa tanto quanto o número de
+núcleos. Para que o ganho fosse mensurável e não ficasse mascarado pelo custo
+fixo de criação de processos (alto sob o método \textit{spawn}), foi necessário
+pré-aquecer o \textit{pool} antes da cronometragem, medindo de fato a região
+paralelizável.
 
 Uma limitação relevante é o \textit{domain shift}: o sistema foi calibrado e
 treinado sobre imagens do CASIA 2.0 (câmeras específicas, formatos JPEG/BMP/TIFF

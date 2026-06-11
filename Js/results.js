@@ -126,8 +126,9 @@ function showSingleResult(filename, payload) {
    MODO 2 — LOTE
    ══════════════════════════════════════════════ */
 function showBatchResult(payload) {
+  const tTotal = (payload.tempo_total != null) ? payload.tempo_total : payload.tempo;
   document.getElementById('batchLabel').textContent =
-    `${payload.n_imagens} imagens · ${payload.workers} worker(s) · ${payload.tempo.toFixed(2)} s`;
+    `${payload.n_imagens} imagens · ${payload.workers} workers · análise ${payload.tempo.toFixed(2)} s · total ${tTotal.toFixed(2)} s`;
 
   /* KPIs */
   const kpiRoot = document.getElementById('batchKpis');
@@ -137,12 +138,12 @@ function showBatchResult(payload) {
   const scoresBad   = (d['MANIPULADA'] || 0) + (d['ALTA CHANCE DE MANIPULACAO'] || 0);
 
   kpiRoot.innerHTML = renderKpis([
-    { label: 'Imagens',         value: payload.n_imagens,                color: '#74b9ff' },
-    { label: 'Tempo',           value: `${payload.tempo.toFixed(2)} s`,  color: '#fdcb6e' },
-    { label: 'Workers',         value: payload.workers,                  color: '#a29bfe' },
-    { label: 'Suspeitas',       value: scoresBad,                         color: '#e74c3c' },
-    { label: 'Consistentes',    value: scoresOk,                          color: '#27ae60' },
-    { label: 'Inconclusivas',   value: scoresMid,                         color: '#f1c40f' },
+    { label: 'Imagens',         value: payload.n_imagens,                 color: '#74b9ff' },
+    { label: 'Análise (par.)',  value: `${payload.tempo.toFixed(2)} s`,    color: '#fdcb6e' },
+    { label: 'Total (c/ bench)', value: `${tTotal.toFixed(2)} s`,          color: '#e17055' },
+    { label: 'Workers',         value: payload.workers,                   color: '#a29bfe' },
+    { label: 'Suspeitas',       value: scoresBad,                          color: '#e74c3c' },
+    { label: 'Consistentes',    value: scoresOk,                           color: '#27ae60' },
   ]);
 
   /* distribuição */
@@ -231,8 +232,9 @@ function showDatasetResult(payload) {
 /* Renderiza o painel de benchmark (KPIs, gráficos e tabelas) sem decidir
    visibilidade da seção — usado tanto isolado quanto embutido. */
 function renderBenchmark(payload) {
+  const suite = (payload.tempo_total != null) ? ` · suíte ${payload.tempo_total.toFixed(2)}s` : '';
   document.getElementById('bmLabel').textContent =
-    `${payload.n_imagens} imagens · ${payload.cpu_count} CPUs · T1=${payload.T1.toFixed(2)}s`;
+    `${payload.n_imagens} imagens · ${payload.cpu_count} CPUs · T1=${payload.T1.toFixed(2)}s${suite}`;
 
   const forte = payload.forte;
   const fraca = payload.fraca;
@@ -246,7 +248,7 @@ function renderBenchmark(payload) {
     { label: 'Melhor tempo',      value: `${bestTime.toFixed(2)} s`,    color: '#55efc4' },
     { label: 'Speedup máx.',      value: `${bestSpeed.toFixed(2)}×`,    color: '#a29bfe' },
     { label: 'Eficiência máx.',   value: `${(bestEffic*100).toFixed(1)}%`, color: '#fd79a8' },
-    { label: 'Imagens',           value: payload.n_imagens,         color: '#74b9ff' },
+    { label: 'Tempo suíte',       value: (payload.tempo_total != null) ? `${payload.tempo_total.toFixed(2)} s` : '—', color: '#e17055' },
   ]);
 
   const labels = forte.map(m => `${m.workers}w`);
@@ -321,8 +323,9 @@ function renderBenchmarkEmbutido(bm) {
 
   const analises = bm.escopo === 'analises';
   const unidade  = analises ? 'análises' : 'imagens';
+  const suite    = (bm.tempo_total != null) ? ` · suíte ${bm.tempo_total.toFixed(2)}s` : '';
   document.getElementById('bmLabel').textContent =
-    `${bm.n_imagens} ${unidade} · ${bm.cpu_count} CPUs · T1=${bm.T1.toFixed(3)}s`;
+    `${bm.n_imagens} ${unidade} · ${bm.cpu_count} CPUs · T1=${bm.T1.toFixed(3)}s${suite}`;
   if (note) {
     note.style.display = '';
     note.textContent = analises
