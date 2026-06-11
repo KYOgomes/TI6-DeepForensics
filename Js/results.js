@@ -7,8 +7,9 @@ const SEC_SINGLE  = document.getElementById('results-section');
 const SEC_BATCH   = document.getElementById('batch-section');
 const SEC_DATASET = document.getElementById('dataset-section');
 const SEC_BENCH   = document.getElementById('bench-section');
+const SEC_DIST    = document.getElementById('dist-section');
 
-const ALL_SECS    = [SEC_SINGLE, SEC_BATCH, SEC_DATASET, SEC_BENCH];
+const ALL_SECS    = [SEC_SINGLE, SEC_BATCH, SEC_DATASET, SEC_BENCH, SEC_DIST];
 
 function hideAllResults() {
   ALL_SECS.forEach(s => { if (s) s.style.display = 'none'; });
@@ -333,6 +334,95 @@ function renderBenchmarkEmbutido(bm) {
 }
 
 /* ══════════════════════════════════════════════
+   MODO 5 — DISTRIBUÍDO (paralelismo entre nós)
+   ══════════════════════════════════════════════ */
+function showDistResult(payload) {
+  const nNos = payload.n_nos;
+  document.getElementById('distLabel').textContent =
+    `${payload.n_imagens} imagens · ${nNos} nó(s) · ${payload.cores_por_no} núcleo(s)/nó · T1=${payload.T1.toFixed(2)}s`;
+  document.getElementById('distNote').textContent =
+    payload.transporte === 'bytes'
+      ? 'Imagens enviadas (bytes) e distribuídas entre os nós; speedup medido aumentando o nº de nós (baseline = 1 nó sequencial).'
+      : 'Imagens do dataset compartilhado distribuídas entre os nós; speedup medido aumentando o nº de nós (baseline = 1 nó sequencial).';
+
+  const forte = payload.forte || [];
+  const bestSpeed = Math.max(1, ...forte.map(m => m.speedup));
+  const bestEffic = Math.max(...forte.map(m => m.eficiencia));
+  const bestTime  = Math.min(...forte.map(m => m.tempo));
+
+  /* KPIs */
+  document.getElementById('distKpis').innerHTML = renderKpis([
+    { label: 'Nós online',      value: nNos,                            color: '#74b9ff' },
+    { label: 'Imagens',         value: payload.n_imagens,                color: '#74b9ff' },
+    { label: 'T1 (1 nó seq.)',  value: `${payload.T1.toFixed(2)} s`,      color: '#fdcb6e' },
+    { label: 'Melhor tempo',    value: `${bestTime.toFixed(2)} s`,       color: '#55efc4' },
+    { label: 'Speedup máx.',    value: `${bestSpeed.toFixed(2)}×`,       color: '#a29bfe' },
+    { label: 'Eficiência máx.', value: `${(bestEffic * 100).toFixed(1)}%`, color: '#fd79a8' },
+  ]);
+
+  /* Trabalho por nó */
+  document.querySelector('#distNodeTable tbody').innerHTML = (payload.por_no || []).map(p => `
+    <tr>
+      <td class="cell-file">${escapeHtml(p.no_cfg || p.node || '—')}</td>
+      <td>${escapeHtml(p.node || '—')}</td>
+      <td>${p.n || 0}</td>
+      <td>${(p.tempo || 0).toFixed(3)}</td>
+      <td>${(p.rtt || 0).toFixed(3)}</td>
+      <td>${p.ok ? '<span class="dist-node-chip on">ok</span>'
+                 : '<span class="dist-node-chip off">erro</span>'}</td>
+    </tr>`).join('') || '<tr><td colspan="6">—</td></tr>';
+
+  /* Configurações distribuídas (descarta o baseline puramente local = forte[0]) */
+  const dconf  = forte.slice(1);
+  const dlabel = dconf.map(m => `${m.nodes}n`);
+  const ideal  = dconf.map(m => m.nodes);
+  const speeds = dconf.map(m => m.speedup);
+
+  Charts.drawLines(document.getElementById('distSpeedup'), dlabel, [
+    { name: 'Ideal (linear)', color: '#bbb',     values: ideal,  dashed: true },
+    { name: 'Real',           color: '#74b9ff',  values: speeds },
+  ], { yMax: Math.max(...ideal, ...speeds, 1) * 1.1, yLabel: 'Speedup' });
+
+  Charts.drawLines(document.getElementById('distEffic'), dlabel, [
+    { name: 'Eficiência', color: '#55efc4', values: dconf.map(m => m.eficiencia) },
+  ], { yMax: 1.3, yLabel: 'Eficiência' });
+
+  /* Tempo e overhead incluem o baseline (seq) como referência visual */
+  const shortLabel = (m, i) => (i === 0 ? 'seq' : `${m.nodes}n`);
+  Charts.drawBars(document.getElementById('distTime'),
+    forte.map((m, i) => ({ label: shortLabel(m, i), value: m.tempo,
+                           color: i === 0 ? '#e17055' : '#74b9ff' })),
+    { yLabel: 's', format: v => v.toFixed(2) + 's' });
+
+  Charts.drawBars(document.getElementById('distOverhead'),
+    forte.map((m, i) => ({ label: shortLabel(m, i), value: m.overhead, color: '#fdcb6e' })),
+    { yLabel: 's', format: v => v.toFixed(3) + 's' });
+
+  /* Distribuição da classificação */
+  document.getElementById('distDist').innerHTML =
+    renderDist(payload.distribuicao || {}, payload.n_imagens);
+
+  /* Tabela de escalabilidade (todas as configs, com rótulo) */
+  document.querySelector('#distScaleTable tbody').innerHTML = forte.map(m => `
+    <tr>
+      <td>${escapeHtml((m.label || '').replace(/\n/g, ' '))}</td>
+      <td>${m.tempo.toFixed(3)}</td>
+      <td>${m.speedup.toFixed(3)}×</td>
+      <td>${(m.eficiencia * 100).toFixed(1)}%</td>
+      <td>${m.overhead.toFixed(3)}</td>
+    </tr>`).join('');
+
+  /* Resultados por imagem (mais suspeitas primeiro) */
+  document.querySelector('#distTable tbody').innerHTML = (payload.resultados || [])
+    .slice()
+    .sort((a, b) => a.score - b.score)
+    .map((r, i) => rowResult(i + 1, r))
+    .join('');
+
+  showSection(SEC_DIST);
+}
+
+/* ══════════════════════════════════════════════
    HELPERS DE RENDER
    ══════════════════════════════════════════════ */
 function renderKpis(items) {
@@ -390,6 +480,7 @@ document.getElementById('btnAgain')      ?.addEventListener('click', resetUI);
 document.getElementById('btnBatchAgain') ?.addEventListener('click', resetUI);
 document.getElementById('btnDsAgain')    ?.addEventListener('click', resetUI);
 document.getElementById('btnBmAgain')    ?.addEventListener('click', resetUI);
+document.getElementById('btnDistAgain')  ?.addEventListener('click', resetUI);
 
 function resetUI() {
   hideAllResults();
@@ -399,5 +490,6 @@ function resetUI() {
 /* Exporta no escopo global para upload.js usar */
 window.UI = {
   showSingleResult, showBatchResult, showDatasetResult, showBenchResult,
+  showDistResult,
   hideAllResults, resetUI,
 };

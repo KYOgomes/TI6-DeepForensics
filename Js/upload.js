@@ -201,6 +201,73 @@
   });
 
   /* ══════════════════════════════════════
+     MODO — DISTRIBUÍDO (paralelismo entre nós WireGuard)
+     ══════════════════════════════════════ */
+  const distInput      = document.getElementById('distInput');
+  const btnDistPick    = document.getElementById('btnDistPick');
+  const btnDistRun     = document.getElementById('btnDistRun');
+  const distHint       = document.getElementById('distHint');
+  const distLimit      = document.getElementById('distLimit');
+  const distCores      = document.getElementById('distCores');
+  const distLimitWrap  = document.getElementById('distLimitWrap');
+  const distUploadWrap = document.getElementById('distUploadWrap');
+  const distNodesList  = document.getElementById('distNodesList');
+  const btnDistRefresh = document.getElementById('btnDistRefresh');
+
+  let distSource = 'local';
+  let distFiles  = [];
+
+  function refreshDistNodes() {
+    if (!distNodesList) return;
+    distNodesList.textContent = 'verificando…';
+    API.distributedNodes().then(r => {
+      const nodes = r.nodes || [];
+      if (!nodes.length) { distNodesList.textContent = 'nenhum nó configurado'; return; }
+      distNodesList.innerHTML = nodes.map(n => {
+        const det = n.online ? `· ${n.cpu_count || '?'} núcleos` : '· offline';
+        return `<span class="dist-node-chip ${n.online ? 'on' : 'off'}">`
+             + `${escapeHtml(n.name)} ${escapeHtml(det)}</span>`;
+      }).join(' ');
+    }).catch(e => { distNodesList.textContent = 'erro: ' + e.message; });
+  }
+
+  document.querySelectorAll('[data-dist-source]').forEach(b => {
+    b.addEventListener('click', () => {
+      document.querySelectorAll('[data-dist-source]').forEach(x => x.classList.remove('active'));
+      b.classList.add('active');
+      distSource = b.dataset.distSource;
+      distUploadWrap.style.display = distSource === 'upload' ? 'block' : 'none';
+      distLimitWrap .style.display = distSource === 'local'  ? 'flex'  : 'none';
+    });
+  });
+
+  btnDistPick?.addEventListener('click', () => distInput.click());
+  distInput?.addEventListener('change', () => {
+    distFiles = Array.from(distInput.files || []);
+    distHint.textContent = distFiles.length ? `${distFiles.length} arquivo(s)` : 'Nenhuma imagem';
+  });
+  btnDistRefresh?.addEventListener('click', refreshDistNodes);
+
+  /* Atualiza a lista de nós ao abrir a aba (e uma vez no load) */
+  document.querySelector('[data-mode="distributed"]')?.addEventListener('click', refreshDistNodes);
+  refreshDistNodes();
+
+  btnDistRun?.addEventListener('click', () => {
+    const cores = parseInt(distCores.value, 10) || 1;
+    showLoading('Distribuindo as imagens entre os nós…');
+    if (distSource === 'local') {
+      API.distributedLocal({ max: parseInt(distLimit.value, 10) || 40, cores_por_no: cores })
+        .then(payload => { hideLoading(); UI.showDistResult(payload); })
+        .catch(fail);
+    } else {
+      if (!distFiles.length) { hideLoading(); alert('Selecione imagens'); return; }
+      API.distributedUpload(distFiles, cores)
+        .then(payload => { hideLoading(); UI.showDistResult(payload); })
+        .catch(fail);
+    }
+  });
+
+  /* ══════════════════════════════════════
      MODOS 3 e 4 — DATASET e BENCHMARK CP (DESATIVADOS)
      O dataset é usado só p/ treino do Random Forest, e o benchmark de
      computação paralela roda EMBUTIDO junto da análise (imagem única / lote).

@@ -86,11 +86,37 @@
     return _json(r);
   }
 
+  /* ── Computação distribuída (paralelismo entre nós WireGuard) ── */
+  async function distributedNodes() {
+    const r = await fetch(`${BASE}/api/distributed/nodes`);
+    return _json(r);
+  }
+
+  /* opts: { dir?, max?, cores_por_no? } — usa o dataset compartilhado (transporte path) */
+  async function distributedLocal(opts = {}) {
+    const r = await fetch(`${BASE}/api/distributed`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(opts),
+    });
+    return _json(r);
+  }
+
+  /* files: File[] — envia o conteúdo (transporte bytes) */
+  async function distributedUpload(files, cores) {
+    const fd = new FormData();
+    files.forEach(f => fd.append('images', f, f.name));
+    if (cores) fd.append('cores_por_no', String(cores));
+    const r = await fetch(`${BASE}/api/distributed`, { method: 'POST', body: fd });
+    return _json(r);
+  }
+
   window.API = {
     health, info,
     analyzeSingle,
     analyzeBatch,
     evaluateDatasetUpload, evaluateDatasetLocal,
     benchmarkUpload, benchmarkLocal,
+    distributedNodes, distributedLocal, distributedUpload,
   };
 })();

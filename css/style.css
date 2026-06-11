@@ -1181,7 +1181,8 @@ footer .footer-right { text-align: right; }
 }
 
 /* Canvas (gráficos) */
-#dsHist, #bmSpeedup, #bmEffic, #bmTime, #bmOverhead, #dsMetricBars {
+#dsHist, #bmSpeedup, #bmEffic, #bmTime, #bmOverhead, #dsMetricBars,
+#distSpeedup, #distEffic, #distTime, #distOverhead {
   width: 100%; max-width: 100%;
   background: #0f3460; border-radius: 8px;
   display: block;
@@ -1191,9 +1192,34 @@ footer .footer-right { text-align: right; }
 :root[data-theme="dark"] #bmEffic,
 :root[data-theme="dark"] #bmTime,
 :root[data-theme="dark"] #bmOverhead,
-:root[data-theme="dark"] #dsMetricBars {
+:root[data-theme="dark"] #dsMetricBars,
+:root[data-theme="dark"] #distSpeedup,
+:root[data-theme="dark"] #distEffic,
+:root[data-theme="dark"] #distTime,
+:root[data-theme="dark"] #distOverhead {
   background: #0a1628;
 }
+
+/* ── Status dos nós (painel do modo Distribuído) ── */
+.dist-nodes-status {
+  display: flex; flex-wrap: wrap; align-items: center;
+  gap: 8px; margin: 4px 0 10px;
+}
+.dist-nodes-title {
+  font-size: 0.72rem; font-weight: 700; color: var(--gray-500);
+  text-transform: uppercase; letter-spacing: 0.05em;
+}
+.dist-nodes-list { display: inline-flex; flex-wrap: wrap; gap: 6px; }
+.dist-node-chip {
+  font-family: var(--font-mono); font-size: 0.72rem;
+  padding: 3px 9px; border-radius: 999px;
+  border: 1px solid var(--border); color: var(--gray-700);
+  background: var(--bg-card); white-space: nowrap;
+}
+.dist-node-chip.on  { border-color: #27ae60; color: #1e8e4e; background: rgba(39,174,96,0.10); }
+.dist-node-chip.off { border-color: #e74c3c; color: #c0392b; background: rgba(231,76,60,0.08); }
+:root[data-theme="dark"] .dist-node-chip.on  { color: #6ee7a0; }
+:root[data-theme="dark"] .dist-node-chip.off { color: #ff8a7a; }
 /* dsMetricBars é canvas — fixar altura */
 #dsMetricBars { height: 180px; }
 

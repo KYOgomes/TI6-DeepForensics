@@ -1,0 +1,8 @@
+{
+  "_comentario": "Nós WORKER da computação distribuída (rede WireGuard 10.0.0.0/24, hub no servidor AWS 10.0.0.1). O COORDENADOR é esta máquina (10.0.0.6, Felipe) — roda app.py / --coordinator e NÃO entra como worker. Os 2 workers são os outros peers conectados: 10.0.0.2 e 10.0.0.5. Cada worker roda: python Algorithm/distributed.py --worker. Sobrescreva via env: DF_NODES=\"10.0.0.2,10.0.0.5\".",
+  "worker_port": 5001,
+  "nodes": [
+    { "name": "no-2", "host": "10.0.0.2" },
+    { "name": "no-5", "host": "10.0.0.5" }
+  ]
+}

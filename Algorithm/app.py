@@ -54,6 +54,7 @@ from detector_unificado import (
     L1, L2, L3, L4,
 )
 import detector_ml
+import distributed as dist
 from multiprocessing import cpu_count, freeze_support
 
 # Front-end é a raiz do repositório
@@ -407,11 +408,81 @@ def ml_predict():
 
 
 # ─────────────────────────────────────────────
+# Computação DISTRIBUÍDA — paralelismo ENTRE NÓS (WireGuard)
+#   Cada nó analisa uma fatia das imagens (manipulada ou não).
+# ─────────────────────────────────────────────
+@app.route('/api/distributed/nodes')
+def distributed_nodes():
+    """Lista os nós configurados e faz health-check em cada um."""
+    nodes, port = dist.carregar_nos()
+    return jsonify({
+        'ok'         : True,
+        'worker_port': port,
+        'nodes'      : dist.checar_nos(nodes),
+    })
+
+
+@app.route('/api/distributed', methods=['POST'])
+def distributed_run():
+    """
+    Distribui imagens entre os nós e devolve classificação + benchmark entre nós.
+
+    Dois modos de entrada:
+      • multipart: images=<file>*            → transporte 'bytes' (envia conteúdo)
+      • json: {"dir": "...", "max": N}       → transporte 'path' (dataset compartilhado)
+    Parâmetro opcional cores_por_no (default 1 = só paralelismo entre nós).
+    """
+    cores_por_no = 1
+    # ── Entrada por upload (bytes) ──
+    files = request.files.getlist('images')
+    if files:
+        try:
+            cores_por_no = int(request.form.get('cores_por_no') or 1)
+        except ValueError:
+            cores_por_no = 1
+        tmpdir = tempfile.mkdtemp(prefix='df_dist_')
+        try:
+            paths = _save_uploaded(files, tmpdir)[:MAX_BATCH]
+            if not paths:
+                return jsonify({'ok': False, 'erro': 'nenhum arquivo valido'}), 400
+            result = dist.benchmark_distribuido_api(
+                paths, transport='bytes', cores_por_no=cores_por_no)
+            return jsonify(result), (200 if result.get('ok') else 502)
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+    # ── Entrada por pasta local (path compartilhado) ──
+    data = request.get_json(silent=True) or {}
+    pasta = data.get('dir') or _resolve_dataset_dir(os.path.join(ROOT, 'Dataset', 'Au'))
+    n_max = min(int(data.get('max') or 40), MAX_LOCAL)
+    try:
+        cores_por_no = int(data.get('cores_por_no') or 1)
+    except (ValueError, TypeError):
+        cores_por_no = 1
+
+    if not os.path.isdir(pasta):
+        return jsonify({'ok': False, 'erro': 'pasta nao encontrada', 'dir': pasta}), 400
+
+    paths = []
+    for ext in ('*.jpg', '*.jpeg', '*.png', '*.tif', '*.tiff', '*.bmp'):
+        paths.extend(glob(os.path.join(pasta, ext)))
+    paths = sorted(paths)[:n_max]
+    if not paths:
+        return jsonify({'ok': False, 'erro': 'pasta sem imagens'}), 400
+
+    result = dist.benchmark_distribuido_api(
+        paths, transport='path', cores_por_no=cores_por_no)
+    result['dir'] = pasta
+    result['max'] = n_max
+    return jsonify(result), (200 if result.get('ok') else 502)
+
+
+# ─────────────────────────────────────────────
 # Servir exemplos / assets
 # ─────────────────────────────────────────────
 @app.route('/<path:filename>')
 def static_files(filename):
-    if filename in ('app.py', 'detector_unificado.py', 'detector_ml.py'):
+    if filename in ('app.py', 'detector_unificado.py', 'detector_ml.py', 'distributed.py'):
         return ('forbidden', 403)
     full = os.path.join(ROOT, filename)
     if os.path.isfile(full):

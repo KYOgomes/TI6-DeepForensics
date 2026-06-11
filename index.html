@@ -119,6 +119,7 @@
     <div class="mode-tabs" id="modeTabs" role="tablist">
       <button class="mode-tab active" data-mode="single" type="button">Imagem única</button>
       <button class="mode-tab" data-mode="batch" type="button">Lote</button>
+      <button class="mode-tab" data-mode="distributed" type="button">Distribuído</button>
       <!-- Modos "Dataset (Au + Sp)" e "Benchmark CP" OCULTOS:
            o dataset é usado só para treino do Random Forest, e o benchmark de
            computação paralela roda EMBUTIDO junto da análise (imagem única / lote). -->
@@ -233,6 +234,64 @@
       <p class="hint-foot">Até 60 imagens por execução · paralelo usa todos os núcleos</p>
     </div>
 
+    <!-- ════════════ Modo: Distribuído (paralelismo ENTRE NÓS / WireGuard) ════════════ -->
+    <div class="mode-panel" data-mode-panel="distributed">
+      <div class="upload-card mode-card">
+        <div class="upload-icon">
+          <svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="5" r="2.5" />
+            <circle cx="5" cy="19" r="2.5" />
+            <circle cx="19" cy="19" r="2.5" />
+            <path d="M12 7.5v4M12 11.5L6 16.8M12 11.5l6 5.3" />
+          </svg>
+        </div>
+        <h3>Computação distribuída entre nós</h3>
+        <p>Cada nó da rede WireGuard analisa uma <b>fatia das imagens</b> — mede o speedup ao aumentar o nº de nós.</p>
+
+        <div class="dist-nodes-status">
+          <span class="dist-nodes-title">Nós</span>
+          <span class="dist-nodes-list" id="distNodesList">verificando…</span>
+          <button class="btn-secondary-sm" id="btnDistRefresh" type="button">
+            <svg viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="1 4 1 10 7 10" />
+              <path d="M3.51 15a9 9 0 102.13-9.36L1 10" />
+            </svg>
+            Atualizar
+          </button>
+        </div>
+
+        <div class="mode-controls">
+          <label class="seg-control">
+            <span>Origem</span>
+            <div class="segmented">
+              <button class="seg-btn active" type="button" data-dist-source="local">Dataset/ local</button>
+              <button class="seg-btn"        type="button" data-dist-source="upload">Upload</button>
+            </div>
+          </label>
+
+          <label class="seg-control" id="distLimitWrap">
+            <span>Imagens (máx)</span>
+            <input type="number" id="distLimit" class="seg-input" value="40" min="2" max="200" step="2" />
+          </label>
+
+          <label class="seg-control">
+            <span>Núcleos por nó</span>
+            <input type="number" id="distCores" class="seg-input" value="1" min="1" max="64" step="1" />
+          </label>
+        </div>
+
+        <div id="distUploadWrap" style="display:none;">
+          <button class="btn-secondary-sm" id="btnDistPick" type="button">Selecionar imagens…</button>
+          <span class="upload-hint" id="distHint">Nenhuma imagem</span>
+        </div>
+
+        <button class="btn-analyze-again" id="btnDistRun" type="button">
+          Distribuir e analisar
+        </button>
+      </div>
+      <p class="hint-foot">Local usa <code>Dataset/Au</code> via caminho compartilhado · Upload envia os bytes · 1 núcleo/nó isola o paralelismo <b>entre</b> nós.</p>
+    </div>
+
     <!-- ════════════ Modo: Dataset Au + Sp — OCULTO (dataset só p/ treino do RF) ════════════
     <div class="mode-panel" data-mode-panel="dataset">
       <div class="upload-card mode-card">
@@ -335,6 +394,7 @@
   <input type="file" id="auInput" accept="image/jpeg,image/jpg,image/png,image/tiff,image/bmp" multiple />
   <input type="file" id="spInput" accept="image/jpeg,image/jpg,image/png,image/tiff,image/bmp" multiple />
   <input type="file" id="bmInput" accept="image/jpeg,image/jpg,image/png,image/tiff,image/bmp" multiple />
+  <input type="file" id="distInput" accept="image/jpeg,image/jpg,image/png,image/tiff,image/bmp" multiple />
 
   <!-- ═══════════════════════════════════════════════
      RESULTS — Imagem única
@@ -647,6 +707,107 @@
 
     <div class="text-center" id="bmBackWrap">
       <button class="btn-analyze-again" id="btnBmAgain" type="button">Voltar</button>
+    </div>
+  </section>
+
+  <!-- ═══════════════════════════════════════════════
+     RESULTS — Distribuído (entre nós)
+════════════════════════════════════════════════ -->
+  <section id="dist-section">
+    <div class="results-header">
+      <h2>Computação distribuída — entre nós</h2>
+      <span class="filename" id="distLabel">—</span>
+    </div>
+    <p class="bm-embedded-note" id="distNote">
+      Cada nó analisou uma fatia das imagens; o speedup é medido aumentando o nº de nós (baseline = 1 nó sequencial).
+    </p>
+
+    <div class="kpi-row" id="distKpis"></div>
+
+    <div class="card card-mt">
+      <div class="card-title">Trabalho por nó (execução com todos os nós)</div>
+      <div class="table-wrap">
+        <table class="result-table" id="distNodeTable">
+          <thead>
+            <tr>
+              <th>Nó</th>
+              <th>Host</th>
+              <th>Imagens</th>
+              <th>Tempo (s)</th>
+              <th>RTT (s)</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="results-grid card-mt">
+      <div class="card">
+        <div class="card-title">Escalabilidade entre nós — Speedup</div>
+        <canvas id="distSpeedup" width="500" height="240"></canvas>
+      </div>
+      <div class="card">
+        <div class="card-title">Eficiência por nó</div>
+        <canvas id="distEffic" width="500" height="240"></canvas>
+      </div>
+      <div class="card">
+        <div class="card-title">Tempo por configuração</div>
+        <canvas id="distTime" width="500" height="240"></canvas>
+      </div>
+      <div class="card">
+        <div class="card-title">Overhead de rede (latência + serialização)</div>
+        <canvas id="distOverhead" width="500" height="240"></canvas>
+      </div>
+    </div>
+
+    <div class="card card-mt">
+      <div class="card-title">Distribuição da classificação</div>
+      <div class="dist-bars" id="distDist"></div>
+    </div>
+
+    <div class="card card-mt">
+      <div class="card-title">Escalabilidade entre nós — tabela</div>
+      <div class="table-wrap">
+        <table class="result-table" id="distScaleTable">
+          <thead>
+            <tr>
+              <th>Configuração</th>
+              <th>Tempo (s)</th>
+              <th>Speedup</th>
+              <th>Eficiência</th>
+              <th>Overhead (s)</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card card-mt">
+      <div class="card-title">Resultados por imagem</div>
+      <div class="table-wrap">
+        <table class="result-table" id="distTable">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Arquivo</th>
+              <th>Score</th>
+              <th>Status</th>
+              <th>VP</th>
+              <th>ELA</th>
+              <th>Ruído</th>
+              <th>Escala</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="text-center">
+      <button class="btn-analyze-again" id="btnDistAgain" type="button">Voltar</button>
     </div>
   </section>
 
