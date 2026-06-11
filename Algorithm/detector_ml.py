@@ -40,8 +40,15 @@ from detector_unificado import _analisar_leve, calcular_status
 # ─────────────────────────────────────────────
 # CONFIGURAÇÃO
 # ─────────────────────────────────────────────
-# Apenas os 4 scores das análises são usados como features.
-FEATURES   = ['score_vp', 'score_ela', 'score_ruido', 'score_escala']
+# Os 10 descritores usados como features pelo classificador.
+# Os 4 scores são complementados por estatísticas brutas já calculadas
+# pelo pipeline, sem custo adicional de processamento.
+FEATURES = [
+    'score_vp', 'score_ela', 'score_ruido', 'score_escala',  # scores normalizados
+    'ela_mean', 'ela_std',                                    # estatísticas brutas de ELA
+    'cv_ruido',                                               # dispersão do ruído entre blocos
+    'n_linhas', 'n_anomalias', 'n_anom_graves',              # descritores estruturais
+]
 MODEL_PATH = os.path.join(HERE, 'modelo_rf.pkl')
 
 EXTS = ('*.jpg', '*.jpeg', '*.png', '*.tif', '*.tiff', '*.bmp')
@@ -56,9 +63,19 @@ _MODELO_MTIME = None
 # ══════════════════════════════════════════════
 
 def vetor_de_resultado(r):
-    """Recebe o dict de _analisar_leve / analisar_para_api e devolve o vetor [4]."""
-    return [float(r['score_vp']), float(r['score_ela']),
-            float(r['score_ruido']), float(r['score_escala'])]
+    """Recebe o dict de _analisar_leve / analisar_para_api e devolve o vetor [10]."""
+    return [
+        float(r['score_vp']),
+        float(r['score_ela']),
+        float(r['score_ruido']),
+        float(r['score_escala']),
+        float(r.get('ela_mean', 0.0)),
+        float(r.get('ela_std', 0.0)),
+        float(r.get('cv_ruido', 0.0)),
+        float(r.get('n_linhas', 0)),
+        float(r.get('n_anomalias', 0)),
+        float(r.get('n_anom_graves', 0)),
+    ]
 
 
 def _features_de_path(path):

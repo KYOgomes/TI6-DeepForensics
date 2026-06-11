@@ -5,13 +5,16 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>DeepForensics — Detecção de Manipulação em Imagens</title>
-  <meta name="description" content="Pipeline forense unificado: Vanishing Points, ELA, Ruído e Escala para detecção de manipulação em imagens." />
+  <meta name="description"
+    content="Pipeline forense unificado: Vanishing Points, ELA, Ruído e Escala para detecção de manipulação em imagens." />
   <meta name="theme-color" content="#E03131" />
   <meta property="og:title" content="DeepForensics — Detecção de Manipulação em Imagens" />
-  <meta property="og:description" content="Pipeline forense unificado: Vanishing Points, ELA, Ruído e Escala para detecção de manipulação em imagens." />
+  <meta property="og:description"
+    content="Pipeline forense unificado: Vanishing Points, ELA, Ruído e Escala para detecção de manipulação em imagens." />
   <meta property="og:type" content="website" />
   <!-- Favicon SVG inline (não requer arquivo externo) -->
-  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23E03131'/><path d='M16 6L6 11l10 5 10-5-10-5zM6 21l10 5 10-5M6 16l10 5 10-5' stroke='white' stroke-width='2' fill='none' stroke-linecap='round'/></svg>" />
+  <link rel="icon" type="image/svg+xml"
+    href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%23E03131'/><path d='M16 6L6 11l10 5 10-5-10-5zM6 21l10 5 10-5M6 16l10 5 10-5' stroke='white' stroke-width='2' fill='none' stroke-linecap='round'/></svg>" />
   <link
     href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=Space+Mono:wght@400;700&display=swap"
     rel="stylesheet" />
@@ -26,8 +29,8 @@
       <filter id="liquid-glass-filter" x="0%" y="0%" width="100%" height="100%" color-interpolation-filters="sRGB">
         <feTurbulence type="fractalNoise" baseFrequency="0.05 0.05" numOctaves="1" seed="1" result="turbulence" />
         <feGaussianBlur in="turbulence" stdDeviation="2" result="blurredNoise" />
-        <feDisplacementMap in="SourceGraphic" in2="blurredNoise" scale="70"
-          xChannelSelector="R" yChannelSelector="B" result="displaced" />
+        <feDisplacementMap in="SourceGraphic" in2="blurredNoise" scale="70" xChannelSelector="R" yChannelSelector="B"
+          result="displaced" />
         <feGaussianBlur in="displaced" stdDeviation="4" result="finalBlur" />
         <feComposite in="finalBlur" in2="finalBlur" operator="over" />
       </filter>
@@ -49,7 +52,7 @@
 
     <ul class="nav-links">
       <li><a href="#hero" class="liquid-btn">Início</a></li>
-      <li><a href="#how"   class="liquid-btn">Como funciona</a></li>
+      <li><a href="#how" class="liquid-btn">Como funciona</a></li>
       <li><a href="#scope" class="liquid-btn">Sobre</a></li>
     </ul>
 
@@ -61,22 +64,21 @@
 
       <!-- Animated theme toggler (sol ↔ lua) -->
       <button class="theme-toggle" id="themeToggle" type="button" aria-label="Alternar tema">
-        <svg class="sm-svg" viewBox="0 0 24 24" fill="none"
-          stroke="currentColor" stroke-width="2" stroke-linecap="round">
+        <svg class="sm-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round">
           <mask id="theme-mask">
             <rect x="0" y="0" width="100%" height="100%" fill="white" />
             <circle class="sm-mask" cx="33" cy="0" r="9" fill="black" />
           </mask>
-          <circle class="sm-body" cx="12" cy="12" r="5" fill="currentColor"
-            stroke="none" mask="url(#theme-mask)" />
+          <circle class="sm-body" cx="12" cy="12" r="5" fill="currentColor" stroke="none" mask="url(#theme-mask)" />
           <g class="sm-rays">
-            <line x1="12" y1="1"    x2="12" y2="3"    />
-            <line x1="12" y1="21"   x2="12" y2="23"   />
-            <line x1="1"  y1="12"   x2="3"  y2="12"   />
-            <line x1="21" y1="12"   x2="23" y2="12"   />
-            <line x1="5.64"  y1="5.64"  x2="4.22"  y2="4.22"  />
-            <line x1="18.36" y1="5.64"  x2="19.78" y2="4.22"  />
-            <line x1="5.64"  y1="18.36" x2="4.22"  y2="19.78" />
+            <line x1="12" y1="1" x2="12" y2="3" />
+            <line x1="12" y1="21" x2="12" y2="23" />
+            <line x1="1" y1="12" x2="3" y2="12" />
+            <line x1="21" y1="12" x2="23" y2="12" />
+            <line x1="5.64" y1="5.64" x2="4.22" y2="4.22" />
+            <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
+            <line x1="5.64" y1="18.36" x2="4.22" y2="19.78" />
             <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
           </g>
         </svg>
@@ -92,9 +94,9 @@
   <!-- Menu mobile overlay -->
   <div class="mobile-menu" id="mobileMenu" aria-hidden="true">
     <ul class="mobile-menu-links">
-      <li><a href="#hero"                            onclick="closeMobileMenu()">Início</a></li>
-      <li><a href="#how"                             onclick="closeMobileMenu()">Como funciona</a></li>
-      <li><a href="#scope"                           onclick="closeMobileMenu()">Sobre</a></li>
+      <li><a href="#hero" onclick="closeMobileMenu()">Início</a></li>
+      <li><a href="#how" onclick="closeMobileMenu()">Como funciona</a></li>
+      <li><a href="#scope" onclick="closeMobileMenu()">Sobre</a></li>
     </ul>
   </div>
 
@@ -116,7 +118,7 @@
     <!-- Seletor de modo -->
     <div class="mode-tabs" id="modeTabs" role="tablist">
       <button class="mode-tab active" data-mode="single" type="button">Imagem única</button>
-      <button class="mode-tab"        data-mode="batch"  type="button">Lote</button>
+      <button class="mode-tab" data-mode="batch" type="button">Lote</button>
       <!-- Modos "Dataset (Au + Sp)" e "Benchmark CP" OCULTOS:
            o dataset é usado só para treino do Random Forest, e o benchmark de
            computação paralela roda EMBUTIDO junto da análise (imagem única / lote). -->
@@ -155,27 +157,33 @@
             <div class="example-picker" id="examplePicker">
               <div class="example-picker-title">Escolha uma imagem de exemplo</div>
               <div class="example-picker-grid">
-                <button class="example-picker-item" type="button" onclick="loadExampleImage('Fotos/img1.jpg','img1.jpg')">
+                <button class="example-picker-item" type="button"
+                  onclick="loadExampleImage('Fotos/img1.jpg','img1.jpg')">
                   <img src="Fotos/img1.jpg" alt="Exemplo 1" />
                   <span>Foto 1</span>
                 </button>
-                <button class="example-picker-item" type="button" onclick="loadExampleImage('Fotos/img2.jpg','img2.jpg')">
+                <button class="example-picker-item" type="button"
+                  onclick="loadExampleImage('Fotos/img2.jpg','img2.jpg')">
                   <img src="Fotos/img2.jpg" alt="Exemplo 2" />
                   <span>Foto 2</span>
                 </button>
-                <button class="example-picker-item" type="button" onclick="loadExampleImage('Fotos/img3.jpg','img3.jpg')">
+                <button class="example-picker-item" type="button"
+                  onclick="loadExampleImage('Fotos/img3.jpg','img3.jpg')">
                   <img src="Fotos/img3.jpg" alt="Exemplo 3" />
                   <span>Foto 3</span>
                 </button>
-                <button class="example-picker-item" type="button" onclick="loadExampleImage('Fotos/img4.png','img4.png')">
+                <button class="example-picker-item" type="button"
+                  onclick="loadExampleImage('Fotos/img4.png','img4.png')">
                   <img src="Fotos/img4.png" alt="Exemplo 4" />
                   <span>Foto 4</span>
                 </button>
-                <button class="example-picker-item" type="button" onclick="loadExampleImage('Fotos/img5.jpg','img5.jpg')">
+                <button class="example-picker-item" type="button"
+                  onclick="loadExampleImage('Fotos/img5.jpg','img5.jpg')">
                   <img src="Fotos/img5.jpg" alt="Exemplo 5" />
                   <span>Foto 5</span>
                 </button>
-                <button class="example-picker-item" type="button" onclick="loadExampleImage('Fotos/img6.jpg','img6.jpg')">
+                <button class="example-picker-item" type="button"
+                  onclick="loadExampleImage('Fotos/img6.jpg','img6.jpg')">
                   <img src="Fotos/img6.jpg" alt="Exemplo 6" />
                   <span>Foto 6</span>
                 </button>
@@ -204,7 +212,7 @@
             <span>Execução</span>
             <div class="segmented">
               <button class="seg-btn active" type="button" data-batch-mode="par">Paralelo</button>
-              <button class="seg-btn"        type="button" data-batch-mode="seq">Sequencial</button>
+              <button class="seg-btn" type="button" data-batch-mode="seq">Sequencial</button>
             </div>
           </label>
         </div>
@@ -322,11 +330,11 @@
   </section>
 
   <!-- Inputs ocultos -->
-  <input type="file" id="fileInput"  accept="image/jpeg,image/jpg,image/png" />
+  <input type="file" id="fileInput" accept="image/jpeg,image/jpg,image/png" />
   <input type="file" id="batchInput" accept="image/jpeg,image/jpg,image/png,image/tiff,image/bmp" multiple />
-  <input type="file" id="auInput"    accept="image/jpeg,image/jpg,image/png,image/tiff,image/bmp" multiple />
-  <input type="file" id="spInput"    accept="image/jpeg,image/jpg,image/png,image/tiff,image/bmp" multiple />
-  <input type="file" id="bmInput"    accept="image/jpeg,image/jpg,image/png,image/tiff,image/bmp" multiple />
+  <input type="file" id="auInput" accept="image/jpeg,image/jpg,image/png,image/tiff,image/bmp" multiple />
+  <input type="file" id="spInput" accept="image/jpeg,image/jpg,image/png,image/tiff,image/bmp" multiple />
+  <input type="file" id="bmInput" accept="image/jpeg,image/jpg,image/png,image/tiff,image/bmp" multiple />
 
   <!-- ═══════════════════════════════════════════════
      RESULTS — Imagem única
@@ -420,15 +428,21 @@
     <div class="card card-mt">
       <div class="card-title">Resumo técnico</div>
       <div class="tech-summary">
-        <div class="tech-row"><span class="key">Vanishing Point estimado</span><span class="val" id="vpCoords">—</span></div>
+        <div class="tech-row"><span class="key">Vanishing Point estimado</span><span class="val" id="vpCoords">—</span>
+        </div>
         <div class="tech-row"><span class="key">Linhas detectadas</span><span class="val" id="linesCount">—</span></div>
-        <div class="tech-row"><span class="key">Desvio angular médio</span><span class="val" id="angularDev">—</span></div>
+        <div class="tech-row"><span class="key">Desvio angular médio</span><span class="val" id="angularDev">—</span>
+        </div>
         <div class="tech-row"><span class="key">Blobs (objetos)</span><span class="val" id="blobsCount">—</span></div>
-        <div class="tech-row"><span class="key">Anomalias de escala / graves</span><span class="val" id="anomCount">—</span></div>
-        <div class="tech-row"><span class="key">ELA — média blocos / desvio</span><span class="val" id="elaStats">—</span></div>
-        <div class="tech-row"><span class="key">Ruído — coef. variação</span><span class="val" id="noiseCv">—</span></div>
+        <div class="tech-row"><span class="key">Anomalias de escala / graves</span><span class="val"
+            id="anomCount">—</span></div>
+        <div class="tech-row"><span class="key">ELA — média blocos / desvio</span><span class="val"
+            id="elaStats">—</span></div>
+        <div class="tech-row"><span class="key">Ruído — coef. variação</span><span class="val" id="noiseCv">—</span>
+        </div>
         <div class="tech-row"><span class="key">Dimensões da imagem</span><span class="val" id="imgDims">—</span></div>
-        <div class="tech-row"><span class="key">Tempo de processamento</span><span class="val" id="procTime">—</span></div>
+        <div class="tech-row"><span class="key">Tempo de processamento</span><span class="val" id="procTime">—</span>
+        </div>
       </div>
     </div>
 
@@ -466,8 +480,14 @@
         <table class="result-table" id="batchTable">
           <thead>
             <tr>
-              <th>#</th><th>Arquivo</th><th>Score</th>
-              <th>Status</th><th>VP</th><th>ELA</th><th>Ruído</th><th>Escala</th>
+              <th>#</th>
+              <th>Arquivo</th>
+              <th>Score</th>
+              <th>Status</th>
+              <th>VP</th>
+              <th>ELA</th>
+              <th>Ruído</th>
+              <th>Escala</th>
             </tr>
           </thead>
           <tbody></tbody>
@@ -496,9 +516,21 @@
         <div class="card-title">Matriz de confusão (positivo = score ≤ <span id="dsLimiar">40</span>)</div>
         <table class="confusion-matrix" id="dsConfusion">
           <tbody>
-            <tr><td></td><th>Pred: OK</th><th>Pred: MANIP</th></tr>
-            <tr><th>Real: OK</th>   <td class="cm-tn">—</td><td class="cm-fp">—</td></tr>
-            <tr><th>Real: MANIP</th><td class="cm-fn">—</td><td class="cm-tp">—</td></tr>
+            <tr>
+              <td></td>
+              <th>Pred: OK</th>
+              <th>Pred: MANIP</th>
+            </tr>
+            <tr>
+              <th>Real: OK</th>
+              <td class="cm-tn">—</td>
+              <td class="cm-fp">—</td>
+            </tr>
+            <tr>
+              <th>Real: MANIP</th>
+              <td class="cm-fn">—</td>
+              <td class="cm-tp">—</td>
+            </tr>
           </tbody>
         </table>
       </div>
@@ -524,7 +556,16 @@
       <div class="table-wrap">
         <table class="result-table" id="dsTable">
           <thead>
-            <tr><th>#</th><th>Arquivo</th><th>Score</th><th>Status</th><th>VP</th><th>ELA</th><th>Ruído</th><th>Escala</th></tr>
+            <tr>
+              <th>#</th>
+              <th>Arquivo</th>
+              <th>Score</th>
+              <th>Status</th>
+              <th>VP</th>
+              <th>ELA</th>
+              <th>Ruído</th>
+              <th>Escala</th>
+            </tr>
           </thead>
           <tbody></tbody>
         </table>
@@ -574,7 +615,13 @@
       <div class="table-wrap">
         <table class="result-table" id="bmTable">
           <thead>
-            <tr><th>Workers</th><th>Tempo (s)</th><th>Speedup</th><th>Eficiência</th><th>Overhead (s)</th></tr>
+            <tr>
+              <th>Workers</th>
+              <th>Tempo (s)</th>
+              <th>Speedup</th>
+              <th>Eficiência</th>
+              <th>Overhead (s)</th>
+            </tr>
           </thead>
           <tbody></tbody>
         </table>
@@ -586,7 +633,12 @@
       <div class="table-wrap">
         <table class="result-table" id="bmTableFraca">
           <thead>
-            <tr><th>Workers</th><th>Imagens</th><th>Tempo (s)</th><th>Eficiência</th></tr>
+            <tr>
+              <th>Workers</th>
+              <th>Imagens</th>
+              <th>Tempo (s)</th>
+              <th>Eficiência</th>
+            </tr>
           </thead>
           <tbody></tbody>
         </table>
@@ -681,11 +733,14 @@
       </div>
     </div>
     <div class="footer-right">
-      <div class="footer-link-wrap"><a href="https://www.overleaf.com/project/6a21ebdfe064f56688c92045" class="footer-link" target="_blank" rel="noopener noreferrer">Documentação técnica</a></div>
-      <div class="footer-link-wrap"><a href="https://github.com/KYOgomes/TI6-DeepForensics" class="footer-link" target="_blank" rel="noopener noreferrer">Repositório GitHub</a></div>
-      <div><a href="https://www.kaggle.com/datasets/sophatvathana/casia-dataset" class="footer-link" target="_blank" rel="noopener noreferrer">Dataset CASIA ITDE</a></div>
+      <div class="footer-link-wrap"><a href="https://www.overleaf.com/project/6a21ebdfe064f56688c92045"
+          class="footer-link" target="_blank" rel="noopener noreferrer">Documentação técnica</a></div>
+      <div class="footer-link-wrap"><a href="https://github.com/KYOgomes/TI6-DeepForensics" class="footer-link"
+          target="_blank" rel="noopener noreferrer">Repositório GitHub</a></div>
+      <div><a href="https://www.kaggle.com/datasets/sophatvathana/casia-dataset" class="footer-link" target="_blank"
+          rel="noopener noreferrer">Dataset CASIA ITDE</a></div>
     </div>
-</footer>
+  </footer>
 
   <!-- ═══════════════════════════════════════════════
      PREVIEW MODAL
@@ -720,11 +775,21 @@
     <div class="spinner"></div>
     <div class="loading-text" id="loadingText">Processando…</div>
     <div class="loading-steps" id="loadingSteps">
-      <div class="loading-step" data-step="vp">  <div class="loading-step-dot"></div>Vanishing Points (Canny + Hough + RANSAC)</div>
-      <div class="loading-step" data-step="ela"> <div class="loading-step-dot"></div>ELA — recompressão JPEG</div>
-      <div class="loading-step" data-step="ruido"><div class="loading-step-dot"></div>Análise de ruído por blocos</div>
-      <div class="loading-step" data-step="esc"> <div class="loading-step-dot"></div>Detecção de blobs / análise de escala</div>
-      <div class="loading-step" data-step="agg"> <div class="loading-step-dot"></div>Agregação adaptativa do score</div>
+      <div class="loading-step" data-step="vp">
+        <div class="loading-step-dot"></div>Vanishing Points (Canny + Hough + RANSAC)
+      </div>
+      <div class="loading-step" data-step="ela">
+        <div class="loading-step-dot"></div>ELA — recompressão JPEG
+      </div>
+      <div class="loading-step" data-step="ruido">
+        <div class="loading-step-dot"></div>Análise de ruído por blocos
+      </div>
+      <div class="loading-step" data-step="esc">
+        <div class="loading-step-dot"></div>Detecção de blobs / análise de escala
+      </div>
+      <div class="loading-step" data-step="agg">
+        <div class="loading-step-dot"></div>Agregação adaptativa do score
+      </div>
     </div>
   </div>
 
