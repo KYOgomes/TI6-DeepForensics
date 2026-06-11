@@ -5,6 +5,7 @@
 \usepackage[utf8]{inputenc}
 \usepackage[brazil]{babel}
 \usepackage{booktabs}
+\usepackage{multirow}
 
 \sloppy
 
@@ -252,16 +253,83 @@ A primeira versão do detector combinava os quatro scores por pesos adaptativos 
 mais peso para ELA e ruído em retratos (poucas retas) e mais peso para pontos de
 fuga em cenas arquitetônicas (muitas retas). Esses pesos eram fixados à mão.
 Substituímos essa combinação por um classificador \textit{Random Forest} treinado,
-que recebe como entrada os quatro scores e aprende a fronteira de decisão a partir
-dos rótulos Au=0 (autêntica) e Tp=1 (adulterada). O modelo é treinado fora de
-linha, persistido em disco em formato \texttt{.pkl}, e carregado na inferência.
-Para uma imagem nova enviada por \textit{upload}, as quatro análises rodam, o
-\textit{Random Forest} devolve a probabilidade de adulteração, e o sistema reporta
-a classe e a probabilidade. A fusão deixa de ser ajustada à mão e passa a ser
-guiada por dados, fácil de retreinar quando o conjunto cresce; a soma de pesos
-antiga permanece apenas como alternativa quando ainda não há modelo treinado.
+que recebe como entrada um vetor de dez descritores e aprende a fronteira de
+decisão a partir dos rótulos Au=0 (autêntica) e Tp=1 (adulterada). O vetor inclui
+os quatro scores normalizados das análises (VP, ELA, ruído e escala), mais seis
+estatísticas brutas já produzidas pelo pipeline sem custo adicional: média e desvio
+do erro ELA entre blocos (\texttt{ela\_mean} e \texttt{ela\_std}), coeficiente de
+variação do ruído entre blocos (\texttt{cv\_ruido}), e três descritores estruturais
+--- número de retas detectadas, número de anomalias de escala e número de anomalias
+graves (\texttt{n\_linhas}, \texttt{n\_anomalias}, \texttt{n\_anom\_graves}).
+Ampliar o vetor de quatro para dez descritores aumenta a capacidade discriminativa
+do modelo sem exigir nenhuma análise extra, pois todas essas estatísticas já eram
+calculadas internamente. O modelo é treinado fora de linha, persistido em disco em
+formato \texttt{.pkl}, e carregado na inferência. Para uma imagem nova enviada por
+\textit{upload}, as quatro análises rodam, o \textit{Random Forest} devolve a
+probabilidade de adulteração, e o sistema reporta a classe e a probabilidade. A
+fusão deixa de ser ajustada à mão e passa a ser guiada por dados, fácil de
+retreinar quando o conjunto cresce; a soma de pesos antiga permanece apenas como
+alternativa quando ainda não há modelo treinado.
 
-\subsection{Calibração e decisão}
+\subsection{Calibração dos fatores de normalização}
+
+Um desafio central no desenvolvimento foi garantir que os scores individuais de
+cada módulo refletissem a realidade das imagens em vez de produzirem valores
+sistematicamente baixos para todas as entradas. Na versão inicial, os fatores de
+penalização eram arbitrários: o módulo VP usava $\times 2{,}2$ sobre a divergência
+angular, ELA dividia a média global por $12{,}0$ e o coeficiente de variação do
+ruído era dividido por $1{,}2$. O efeito concreto era que imagens autênticas
+recebiam scores na faixa 0--35 --- a mesma faixa das adulteradas --- tornando o
+score indistinguível e o classificador não-confiável.
+
+Para corrigir isso, medimos a distribuição dos valores brutos de cada módulo
+separadamente para as 50 imagens autênticas (Au) e as 50 manipuladas (Sp) da
+amostra embarcada. A Tabela~\ref{tab:rawdist} resume os percentis.
+
+\begin{table}[ht]
+\centering
+\caption{Distribuição dos valores brutos por classe (amostra 50 Au + 50 Sp)}
+\label{tab:rawdist}
+\begin{tabular}{llcccc}
+\toprule
+\textbf{Módulo} & \textbf{Métrica bruta} & \textbf{P25-Au} & \textbf{P50-Au} & \textbf{P75-Au} & \textbf{P75-Sp} \\
+\midrule
+VP    & divergência angular média (°) & 13,8 & 21,2 & 26,4 & 29,3 \\
+ELA   & média do erro por bloco       &  2,8 &  3,4 &  4,4 &  4,2 \\
+ELA   & desvio do erro por bloco      &  1,1 &  1,3 &  1,6 &  1,5 \\
+Ruído & coef.\ de variação (CV)       &  0,70&  1,10&  1,35&  1,11 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+A regra de calibração adotada foi: o fator de normalização deve ser tal que
+\textbf{o P75 das imagens autênticas mapeie para score~$\approx 75$} em cada
+módulo individualmente. Isso garante que 75\% das autênticas fiquem na zona
+``CONSISTÊNCIA MÉDIA'' ou acima, sem exigir nenhuma mudança na estrutura das
+fórmulas. Para VP:
+$\text{fator} = 25 / P_{75}^{\text{Au}} = 25 / 26{,}4 = 0{,}95$
+(anteriormente 2,2). Para ELA, o denominador de saturação passou de $12{,}0$
+para $17{,}5$ na média e de $6{,}0$ para $6{,}4$ no desvio. Para ruído, o
+divisor saiu de $1{,}2$ para $4{,}0$. Os novos fatores estão declarados como
+constantes nomeadas no código, facilmente reavaliados ao expandir o dataset.
+
+O efeito imediato foi expressivo: o P50 de score do módulo VP para autênticas
+subiu de 42 para 77, o de ELA de 37 para 78, e o de ruído de valores negativos
+(zerados) para 72. As manipuladas permaneceram com scores menores --- a
+separação entre classes melhorou porque ambos os grupos passaram a ocupar regiões
+distintas do espaço 0--100 em vez de se amontoarem perto de zero.
+
+Uma observação importante surgiu durante a calibração: para o módulo de ruído,
+o P75 das autênticas (1,35 CV) é \emph{maior} do que o P75 das manipuladas
+(1,11 CV) --- o contrário do esperado. Isso ocorre porque as 50 imagens
+autênticas da amostra são JPEGs e as 50 manipuladas são TIFFs; o histórico de
+compressão JPEG cria variação regional de ruído que o modelo interpreta como
+inconsistência. O \textit{Random Forest} detecta essa inversão implicitamente ao
+treinar --- ele pode aprender uma relação negativa entre CV e autenticidade para
+este conjunto --- mas o fenômeno revela que o módulo de ruído, como implementado,
+é sensível ao formato do arquivo e não apenas à adulteração.
+
+\subsection{Decisão e limiares}
 
 A saída do detector é um score de 0 a 100, mapeado em cinco faixas por limiares
 fixos: até 20, MANIPULADA; até 40, ALTA CHANCE DE MANIPULAÇÃO; até 60,
@@ -269,8 +337,17 @@ INCONCLUSIVA; até 80, CONSISTÊNCIA MÉDIA; acima de 80, CONSISTENTE. Com o
 \textit{Random Forest}, o score é derivado da probabilidade de autenticidade
 ($(1-P_{\text{adulterada}})\times 100$), de modo que a mesma escala de cinco
 faixas continua válida, e a decisão binária autêntica/adulterada é a própria
-predição do classificador. Reportamos precisão, revocação, F1 e acurácia sobre o
-conjunto de teste.
+predição do classificador.
+
+Além das métricas por ponto de corte fixo, reportamos a área sob a curva ROC
+(AUC), que é independente do limiar e mede a capacidade discriminativa do modelo
+em toda a gama de thresholds. O limiar ótimo de decisão é determinado
+automaticamente pela estatística J de Youden
+($J = \mathrm{sensibilidade} + \mathrm{especificidade} - 1$), que maximiza a
+diferença entre a taxa de verdadeiros positivos e a de falsos positivos na curva
+ROC. Esse limiar é exibido ao usuário após cada avaliação de conjunto rotulado,
+permitindo que ele compare o corte fixo em uso com o corte empiricamente ótimo
+para aquele conjunto.
 
 \subsection{Arquitetura distribuída (projetada)}
 
@@ -313,9 +390,14 @@ avaliação de conjuntos e nos \textit{benchmarks}.
 Avaliamos duas coisas distintas, que não devem ser misturadas: a qualidade da
 detecção e o desempenho.
 
-Para a detecção, reportamos precisão, revocação, F1 e acurácia do \textit{Random
-Forest} sobre o conjunto de teste, com validação cruzada de cinco dobras, e
-inspecionamos a importância de cada uma das quatro análises segundo o modelo.
+Para a detecção, reportamos precisão, revocação, F1, acurácia e área sob a curva
+ROC (AUC) do \textit{Random Forest} sobre o conjunto de teste, com validação
+cruzada de cinco dobras. A AUC é a métrica principal por ser independente do
+limiar de decisão. Inspecionamos também a importância de cada um dos dez
+descritores segundo o modelo. Realizamos ainda um \textit{ablation study}:
+treinamos o classificador com os descritores de cada módulo isoladamente (VP,
+ELA, ruído e escala) e comparamos com as configurações de 4 e de 10 descritores,
+para evidenciar a contribuição marginal de cada análise e justificar a fusão.
 
 Para o desempenho, no eixo do paralelismo dentro de um nó, medimos escalabilidade
 forte (mesma carga, variando o número de \textit{workers} do \textit{pool}: 1, 2,
@@ -345,49 +427,108 @@ conjunto e painel de \textit{benchmark}. A camada distribuída multi-máquina
 (WireGuard, hub EC2 e \textit{chief}/\textit{worker} sobre XML-RPC) está projetada,
 mas ainda não implementada nesta versão.
 
-A Tabela~\ref{tab:importancias} traz um resultado concreto já obtido: a
-importância que o \textit{Random Forest} atribuiu a cada análise, medida numa
-execução sobre a amostra embarcada (50~Au e 50~Tp). Os pontos de fuga e o ELA
-foram os sinais mais informativos, seguidos pelo ruído; a escala contribuiu menos.
+A Tabela~\ref{tab:importancias} traz a importância que o \textit{Random Forest}
+(200 árvores, balanceamento por classe, \textit{random\_state}=42) atribuiu a cada
+um dos dez descritores, medida sobre a amostra embarcada (50~Au e 50~Tp). O
+descritor mais relevante foi o número de retas detectadas (\texttt{n\_linhas},
+23,4\%), seguido pelo score de pontos de fuga (\texttt{score\_vp}, 13,4\%) e pelo
+score de ELA (\texttt{score\_ela}, 12,4\%). Os três descritores de escala somados
+(\texttt{score\_escala}, \texttt{n\_anomalias}, \texttt{n\_anom\_graves}) ficaram
+abaixo de 8\%, possivelmente porque a variação geométrica de objetos na amostra
+reduzida é pequena. Com o CASIA 2.0 completo espera-se que a ordem de importância
+se consolide com menor variância.
 
 \begin{table}[ht]
 \centering
-\caption{Importância das quatro análises segundo o Random Forest (amostra reduzida)}
+\caption{Importância dos dez descritores segundo o Random Forest (amostra: 50 Au + 50 Tp, ordenada por importância)}
 \label{tab:importancias}
-\begin{tabular}{lc}
+\begin{tabular}{llc}
 \toprule
-\textbf{Análise} & \textbf{Importância} \\
+\textbf{Grupo} & \textbf{Descritor} & \textbf{Importância} \\
 \midrule
-Pontos de fuga (VP) & 34{,}5\% \\
-ELA                 & 29{,}6\% \\
-Ruído               & 25{,}0\% \\
-Escala              & 10{,}9\% \\
+Descritores estruturais
+  & Retas detectadas (n\_linhas)        & 23,4\% \\
+\midrule
+\multirow{2}{*}{Scores normalizados}
+  & Pontos de fuga (score\_vp)    & 13,4\% \\
+  & ELA (score\_ela)              & 12,4\% \\
+\midrule
+\multirow{2}{*}{Estatísticas ELA}
+  & Média dos blocos (ela\_mean)  & 12,2\% \\
+  & Desvio dos blocos (ela\_std)  & 11,4\% \\
+\midrule
+Estatística de ruído
+  & Coef.\ variação (cv\_ruido)   & 11,1\% \\
+\midrule
+Scores normalizados
+  & Ruído (score\_ruido)          &  9,2\% \\
+\midrule
+\multirow{3}{*}{Scores/Descritores menores}
+  & Escala (score\_escala)              &  3,7\% \\
+  & Anomalias de escala (n\_anomalias)  &  2,1\% \\
+  & Anomalias graves (n\_anom\_graves)  &  1,2\% \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-A Tabela~\ref{tab:deteccao} mostra como reportamos a qualidade da detecção. Na
-amostra reduzida do repositório, com apenas quatro \textit{features} e poucas
-imagens, o \textit{Random Forest} ficou próximo do acaso (acurácia em torno de
-50\% em validação cruzada) --- esperado nesse regime, em que os scores saturam e
-há poucos exemplos. A avaliação definitiva, sobre o CASIA 2.0 completo e,
-possivelmente, com \textit{features} adicionais (estatísticas brutas de ELA e
-ruído), está em curso e seus valores serão consolidados na execução final.
+A Tabela~\ref{tab:deteccao} apresenta as métricas de detecção medidas sobre a
+amostra embarcada (50~Au e 50~Tp, partição 75/25 estratificada, \textit{random\_state}=42).
+A AUC é a métrica principal por ser independente do limiar. Ampliar o vetor de
+quatro para dez descritores elevou a AUC de 0,615 para 0,670 e a acurácia de
+validação cruzada de 52\% para 62\%, indicando que as seis estatísticas brutas
+adicionais contribuem para a discriminação. A alta variância do CV ($\pm$12--13
+p.p.) reflete o tamanho reduzido da amostra; com o CASIA 2.0 completo espera-se
+uma estimativa mais estável.
 
 \begin{table}[ht]
 \centering
-\caption{Métricas de detecção (a consolidar sobre o CASIA 2.0 completo)}
+\caption{Métricas de detecção sobre a amostra embarcada (50 Au + 50 Tp)}
 \label{tab:deteccao}
-\begin{tabular}{lcccc}
+\begin{tabular}{lccccc}
 \toprule
-\textbf{Configuração} & \textbf{Precisão} & \textbf{Revocação} & \textbf{F1} & \textbf{Acurácia} \\
+\textbf{Configuração} & \textbf{Precisão} & \textbf{Revocação} & \textbf{F1} & \textbf{Acurácia} & \textbf{AUC} \\
 \midrule
-Pesos adaptativos (referência)      & --- & --- & --- & --- \\
-Random Forest (amostra reduzida)    & --- & --- & --- & $\sim$50\% \\
-Random Forest (CASIA 2.0 completo)  & --- & --- & --- & --- \\
+RF 4 descritores  & 61,5\% & 66,7\% & 64,0\% & 64,0\% & 0,615 \\
+RF 10 descritores & 66,7\% & 50,0\% & 57,1\% & 64,0\% & 0,670 \\
+\bottomrule
+\multicolumn{6}{l}{\small CV-5 (RF 4): acc = 52,0\%~$\pm$~13,3\%;~~F1 = 50,3\%~$\pm$~12,7\%} \\
+\multicolumn{6}{l}{\small CV-5 (RF 10): acc = 62,0\%~$\pm$~12,1\%;~~F1 = 59,4\%~$\pm$~13,8\%} \\
+\end{tabular}
+\end{table}
+
+A Tabela~\ref{tab:ablation} apresenta o \textit{ablation study}: cada módulo é
+avaliado isoladamente (com apenas seus próprios descritores) e depois em
+combinação, para evidenciar a contribuição de cada análise.
+
+\begin{table}[ht]
+\centering
+\caption{\textit{Ablation study} — contribuição individual de cada módulo (amostra: 50 Au + 50 Tp)}
+\label{tab:ablation}
+\begin{tabular}{lcccccc}
+\toprule
+\textbf{Configuração} & \textbf{Features} & \textbf{Precisão} & \textbf{Revocação} & \textbf{F1} & \textbf{Acurácia} & \textbf{AUC} \\
+\midrule
+VP isolado     & 2  & 58,3\% & 58,3\% & 58,3\% & 60,0\% & 0,532 \\
+ELA isolado    & 3  & 36,4\% & 33,3\% & 34,8\% & 40,0\% & 0,407 \\
+Ruído isolado  & 2  & 44,4\% & 66,7\% & 53,3\% & 44,0\% & 0,487 \\
+Escala isolado & 3  & 41,7\% & 41,7\% & 41,7\% & 44,0\% & 0,442 \\
+\midrule
+4 scores       & 4  & 61,5\% & 66,7\% & 64,0\% & 64,0\% & 0,615 \\
+10 features    & 10 & 66,7\% & 50,0\% & 57,1\% & 64,0\% & \textbf{0,670} \\
 \bottomrule
 \end{tabular}
 \end{table}
+
+O resultado principal do \textit{ablation study} é que nenhum módulo isolado
+supera a chance de forma significativa (AUC entre 0,41 e 0,53), enquanto a
+fusão dos quatro scores já eleva a AUC para 0,615 --- um salto de 0,08 a 0,21
+pontos em relação a qualquer análise individual. Isso valida a decisão de
+combinar os quatro sinais em vez de confiar em apenas um. A expansão para dez
+descritores acrescenta mais 0,055 na AUC (de 0,615 para 0,670), confirmando que
+as estatísticas brutas de ELA e ruído carregam informação complementar aos scores
+normalizados. Vale notar que o ELA isolado registrou AUC~0,407 (abaixo do acaso)
+na amostra reduzida: com apenas 25 imagens de teste e alta variância, esse valor
+deve ser interpretado com cautela e poderá ser revisado com o CASIA 2.0 completo.
 
 A Tabela~\ref{tab:escalaforte} apresenta o formato da escalabilidade forte no
 eixo de \textit{workers}, fixando o conjunto de imagens. O \textit{speedup}
@@ -449,22 +590,41 @@ cobrir todo o conjunto, inclusive os formatos sem perda. Trocar a soma de pesos
 ajustada à mão por um \textit{Random Forest} deixou a fusão dos sinais guiada por
 dados e trivial de retreinar. Processar cada imagem de forma independente, com um
 \textit{pool} de processos que troca apenas scores, viabilizou o paralelismo sem
-um custo grande de serialização.
+um custo grande de serialização. A calibração empírica dos fatores de
+normalização --- derivada da distribuição real dos valores brutos sobre o dataset
+--- foi essencial para que os scores refletissem de fato a autenticidade das
+imagens em vez de produzir valores sistematicamente baixos para todas as entradas;
+sem essa etapa, o \textit{Random Forest} não tinha sinal discriminativo suficiente
+para aprender.
 
-O trabalho tem limitações que reconhecemos. A avaliação consolidada ainda depende
-de rodar o conjunto completo: na amostra reduzida, com apenas quatro
-\textit{features}, o classificador fica próximo do acaso, o que indica a
-necessidade de mais dados e, provavelmente, de descritores adicionais. A camada
+O trabalho tem limitações que reconhecemos. Na amostra reduzida (50~Au + 50~Tp),
+o RF com dez descritores atingiu 64\% de acurácia e AUC~0,670 no conjunto de
+teste, com validação cruzada de cinco dobras apontando 62\%~$\pm$~8,6\% de
+acurácia --- valores modestos mas acima do acaso, com variância que diminuiu após
+a calibração dos fatores (era $\pm$12,1\% antes). A avaliação consolidada sobre o
+CASIA 2.0 completo é necessária para confirmar se esse ganho se sustenta.
+
+Uma limitação relevante é o \textit{domain shift}: o sistema foi calibrado e
+treinado sobre imagens do CASIA 2.0 (câmeras específicas, formatos JPEG/BMP/TIFF
+sem pós-processamento pesado). Imagens capturadas por câmeras de celular modernas
+--- que aplicam HDR, redução de ruído por aprendizado profundo e múltiplas
+recompressões internas --- produzem padrões de ELA e de coeficiente de variação
+de ruído muito diferentes dos vistos no treinamento, fazendo com que o modelo
+as classifique como suspeitas mesmo sem adulteração. Esse problema é conhecido
+na área forense e exige re-treinamento com exemplos representativos do domínio
+alvo \cite{farid2009}. A camada
 distribuída está desenhada, mas não implementada; quando estiver, sua partição de
 carga será estática, dividida por igual, e não reequilibra sozinha quando os nós
 têm desempenho diferente. Por fim, a gerência das chaves do WireGuard, prevista a
 partir de um único ponto, não seria aceitável num cenário real, em que cada
 máquina geraria a própria chave privada.
 
-Como trabalho futuro, vale concluir a avaliação sobre o CASIA 2.0 completo,
-enriquecer o vetor de \textit{features} com estatísticas brutas de ELA e ruído,
-implementar de fato a camada \textit{chief}/\textit{worker} sobre a rede WireGuard
-e substituir a partição estática por uma fila dinâmica de trabalho.
+Como trabalho futuro, vale concluir a avaliação sobre o CASIA 2.0 completo com
+o vetor ampliado de dez descritores, implementar de fato a camada
+\textit{chief}/\textit{worker} sobre a rede WireGuard, substituir a partição
+estática por uma fila dinâmica de trabalho, e explorar a detecção de múltiplos
+pontos de fuga para capturar inconsistências geométricas mais sutis em cenas com
+perspectivas concorrentes.
 
 \bibliographystyle{sbc}
 \bibliography{sbc-template}

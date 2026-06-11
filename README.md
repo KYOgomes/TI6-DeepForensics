@@ -56,22 +56,96 @@ DeepForensics/
 ## Como rodar
 
 ### Pré-requisitos
-- Python 3.10+
-- pip
 
-### Setup
+- **Python 3.10+** — baixe em [python.org](https://python.org)
+  - No **Windows**, marque **"Add Python to PATH"** durante a instalação
+  - No **Mac**, pode instalar também via Homebrew: `brew install python`
+- **Git** — [git-scm.com](https://git-scm.com)
+
+---
+
+### 🍎 Mac / Linux
+
+Abra o **Terminal** e cole os comandos abaixo em sequência:
+
 ```bash
+# 1. Clone o repositório e entre na pasta
+git clone https://github.com/KYOgomes/TI6-DeepForensics.git
+cd TI6-DeepForensics
+
+# 2. Crie o ambiente virtual
+python3 -m venv .venv
+
+# 3. Ative o ambiente virtual
+source .venv/bin/activate
+
+# 4. Instale as dependências
 pip install -r Algorithm/requirements.txt
-```
 
-### Subir o servidor
-```bash
+# 5. Suba o servidor
 python Algorithm/app.py
 ```
 
-Abra **http://127.0.0.1:5000** no navegador. O Flask serve tanto a API quanto o front estático.
+Abra **http://127.0.0.1:5000** no navegador.
+
+> **⚠️ Toda vez que abrir um terminal novo**, ative o ambiente virtual antes de rodar o servidor:
+> ```bash
+> cd TI6-DeepForensics
+> source .venv/bin/activate
+> python Algorithm/app.py
+> ```
+
+---
+
+### 🪟 Windows
+
+Abra o **Prompt de Comando (cmd)** e cole os comandos abaixo em sequência:
+
+```cmd
+:: 1. Clone o repositório e entre na pasta
+git clone https://github.com/KYOgomes/TI6-DeepForensics.git
+cd TI6-DeepForensics
+
+:: 2. Crie o ambiente virtual
+python -m venv .venv
+
+:: 3. Ative o ambiente virtual
+.venv\Scripts\activate
+
+:: 4. Instale as dependências
+pip install -r Algorithm/requirements.txt
+
+:: 5. Suba o servidor
+python Algorithm/app.py
+```
+
+Abra **http://127.0.0.1:5000** no navegador.
+
+> **⚠️ Se usar PowerShell** em vez do cmd e aparecer erro de permissão, rode antes:
+> ```powershell
+> Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+> ```
+> E use `.venv\Scripts\Activate.ps1` no lugar de `.venv\Scripts\activate`.
+
+> **⚠️ Toda vez que abrir um terminal novo**, ative o ambiente virtual antes de rodar o servidor:
+> ```cmd
+> cd TI6-DeepForensics
+> .venv\Scripts\activate
+> python Algorithm/app.py
+> ```
+
+---
+
+### 📝 Observações
+
+- **Não use o Live Server do VS Code** — o próprio Flask já serve o front-end. Acesse sempre via **http://127.0.0.1:5000**.
+- O terminal vai mostrar `(.venv)` no início da linha quando o ambiente virtual estiver ativo.
+- Para parar o servidor, pressione `Ctrl + C` no terminal.
+
+---
 
 ### Dataset completo (opcional)
+
 O repositório inclui só uma amostra de 50+50 em `Dataset/Au/sample/` e `Dataset/Tp/sample/`. Para usar o CASIA completo, baixe o ITDE 2.0 e coloque as imagens em `Dataset/Au/` e `Dataset/Tp/`. O backend usa as pastas principais por padrão e cai automaticamente nas `sample/` se as principais estiverem vazias.
 
 ## Modos da UI
@@ -97,6 +171,8 @@ O repositório inclui só uma amostra de 50+50 em `Dataset/Au/sample/` e `Datase
 | `POST` | `/api/benchmark-local`  | Benchmark CP em pasta local                    |
 
 ## CLI do detector (uso direto sem servidor)
+
+> Ative o ambiente virtual antes (`source .venv/bin/activate` no Mac / `.venv\Scripts\activate` no Windows).
 
 ```bash
 # Imagem única

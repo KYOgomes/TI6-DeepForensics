@@ -74,6 +74,15 @@ PESO_RUIDO_BASE  = 0.25
 PESO_ESCALA_BASE = 0.15
 
 ELA_QUALITY = 75
+
+# Fatores de normalização calibrados empiricamente no dataset (50 Au + 50 Sp).
+# Regra: P75 das imagens autênticas → score ≈ 75 em cada módulo.
+# Anteriores (arbitrários): VP=2.2, ELA_C1=12.0, ELA_C2=6.0, RUIDO_C=1.2
+VP_FACTOR   = 0.95   # era 2.2  — P75 Au mean_div=26.4° → score=75
+ELA_C1_MEAN = 17.5   # era 12.0 — P75 Au ela_mean=4.39  → penalidade=12.5/50
+ELA_C2_STD  = 6.4    # era  6.0 — P75 Au ela_std=1.60   → penalidade=12.5/50
+RUIDO_C     = 4.0    # era  1.2 — valor intermediário; preserva informação de CV
+ESCALA_C    = 2.0    # era  1.5 — ligeiramente menos agressivo para scale
 # ──────────────────────────────────────────────
 
 
@@ -128,7 +137,7 @@ def analisar_vp(img):
     if vp is None:
         return 50, None, [], n
     divs  = [angle_divergence(l[0], vp) for l in lines]
-    score = round(max(0.0, min(100.0, 100.0 - np.mean(divs) * 2.2)), 2)
+    score = round(max(0.0, min(100.0, 100.0 - np.mean(divs) * VP_FACTOR)), 2)
     return score, vp, divs, n
 
 
@@ -191,8 +200,8 @@ def analisar_ela(image_path, quality=ELA_QUALITY):
     media_global = np.mean(block_means)
     std_global   = np.std(block_means)
 
-    penalidade_media = min(50, (media_global / 12.0) * 50)
-    penalidade_std   = min(50, (std_global   /  6.0) * 50)
+    penalidade_media = min(50, (media_global / ELA_C1_MEAN) * 50)
+    penalidade_std   = min(50, (std_global   / ELA_C2_STD)  * 50)
     score_ela = round(max(0.0, 100.0 - penalidade_media - penalidade_std), 2)
 
     return ela_vis, score_ela, std_map, media_global, std_global
@@ -223,7 +232,7 @@ def analisar_ruido(img):
     std_var   = np.std(block_vars)
     cv        = std_var / (media_var + 1e-6)
 
-    score_ruido = round(max(0.0, min(100.0, 100.0 - (cv / 1.2) * 100)), 2)
+    score_ruido = round(max(0.0, min(100.0, 100.0 - (cv / RUIDO_C) * 100)), 2)
 
     noise_vis = np.clip(noise * 5, 0, 255).astype(np.uint8)
     return noise_vis, score_ruido, var_map, cv
@@ -278,7 +287,7 @@ def analisar_escala(img):
                     if div > 1.0:
                         anomalias.append((i,j,div))
         if n_pares > 0:
-            score_escala = max(0.0, 100.0 - (pen_total/n_pares/1.5)*100)
+            score_escala = max(0.0, 100.0 - (pen_total/n_pares/ESCALA_C)*100)
 
     detalhes = []
     for idx, b in enumerate(blobs):
@@ -407,12 +416,30 @@ def _analisar_core(image_path):
 
 
 def _analisar_leve(path):
-    """Versão sem dados visuais — usada no Pool (multiprocessing)."""
+    """Versão sem dados visuais — usada no Pool (multiprocessing).
+    Retorna scores do pipeline puro (sem RF) para não contaminar o benchmark
+    com overhead de import/carregamento do modelo em cada worker."""
     r = _analisar_core(path)
     for k in ['_img','_vp','_divs','_lines_raw','_ela_vis',
               '_std_map','_noise_vis','_var_map','_vis_escala']:
         r.pop(k, None)
     return r
+
+
+def _aplicar_rf(resultados):
+    """Aplica o RF (no processo principal) sobre lista de resultados de _analisar_leve.
+    O modelo é carregado uma única vez via cache global — sem overhead por worker."""
+    try:
+        from detector_ml import prever_de_resultado
+        for r in resultados:
+            if 'erro' not in r:
+                ml = prever_de_resultado(r)
+                if ml is not None:
+                    r['score']  = ml['score']
+                    r['status'] = label_status(ml['score'])
+    except Exception:
+        pass
+    return resultados
 
 
 # ══════════════════════════════════════════════
@@ -680,6 +707,9 @@ def avaliar_dataset_api(au_paths, sp_paths, workers=None):
         resultados = [_analisar_leve(p) for p in todas]
     elapsed = time.perf_counter() - t_ini
 
+    # RF aplicado no processo principal (cache único, sem overhead por worker)
+    _aplicar_rf(resultados)
+
     preds  = [1 if r['score'] <= L2 else 0 for r in resultados]
     scores = [float(r['score']) for r in resultados]
 
@@ -693,6 +723,21 @@ def avaliar_dataset_api(au_paths, sp_paths, workers=None):
     precisao = tp/(tp+fp)    if (tp+fp) else 0
     recall   = tp/(tp+fn)    if (tp+fn) else 0
     f1       = 2*precisao*recall/(precisao+recall) if (precisao+recall) else 0
+
+    # ROC-AUC e limiar ótimo por estatística J de Youden
+    # Score mais baixo = mais suspeita, então P(manipulada) = 1 - score/100
+    auc_score     = None
+    limiar_otimo  = None
+    try:
+        from sklearn.metrics import roc_auc_score, roc_curve
+        proba_manip = [1.0 - s / 100.0 for s in scores]
+        auc_score   = round(float(roc_auc_score(labels, proba_manip)), 4)
+        fpr, tpr, thresh = roc_curve(labels, proba_manip)
+        j_idx        = int(np.argmax(tpr - fpr))
+        # converter de volta para escala de score (0–100)
+        limiar_otimo = round((1.0 - float(thresh[j_idx])) * 100.0, 1)
+    except Exception:
+        pass
 
     niveis = {'MANIPULADA':0,'ALTA CHANCE DE MANIPULACAO':0,
               'INCONCLUSIVA':0,'CONSISTENCIA MEDIA':0,'CONSISTENTE':0}
@@ -711,9 +756,11 @@ def avaliar_dataset_api(au_paths, sp_paths, workers=None):
             'precisao' : float(precisao),
             'recall'   : float(recall),
             'f1'       : float(f1),
+            'auc'      : auc_score,
             'tp': tp, 'tn': tn, 'fp': fp, 'fn': fn,
         },
-        'limiar_pos': L2,
+        'limiar_pos'   : L2,
+        'limiar_otimo' : limiar_otimo,
         'distribuicao': niveis,
         'au_scores' : scores[:len(au_paths)],
         'sp_scores' : scores[len(au_paths):],
@@ -743,6 +790,9 @@ def analisar_lote_api(paths, workers=None):
     else:
         resultados = [_analisar_leve(p) for p in paths]
     elapsed = time.perf_counter() - t_ini
+
+    # RF aplicado no processo principal (cache único, sem overhead por worker)
+    _aplicar_rf(resultados)
 
     niveis = {'MANIPULADA':0,'ALTA CHANCE DE MANIPULACAO':0,
               'INCONCLUSIVA':0,'CONSISTENCIA MEDIA':0,'CONSISTENTE':0}
